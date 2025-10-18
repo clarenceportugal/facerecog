@@ -1,0 +1,16 @@
+../../bin/sz_split.exe,sha256=qSkxycSDgoVPwoswOwsObJo_WZ3XbGYI9H9iRPMhe50,108429
+../../bin/sz_wc.exe,sha256=dCTaWnqLr93OigfnaFs9fzHg9RrOD1RGkKFk-Pr2yOU,108426
+cli/__init__.py,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+cli/__pycache__/__init__.cpython-313.pyc,,
+cli/__pycache__/split.cpython-313.pyc,,
+cli/__pycache__/wc.cpython-313.pyc,,
+cli/split.py,sha256=GP0sNydt9wrRQ_4J2v_mJp29P6TLEZnIGJeT55924zQ,3535
+cli/wc.py,sha256=sw5-kdK8iInePxN9xPsm2f5CrCKn91OZCScgxgjUZns,4442
+stringzilla-4.1.0.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+stringzilla-4.1.0.dist-info/METADATA,sha256=xyuYy7Z-zxUnugMusVG7bmQX72vcfAt__xa7Hm4rWWs,107391
+stringzilla-4.1.0.dist-info/RECORD,,
+stringzilla-4.1.0.dist-info/WHEEL,sha256=qV0EIPljj1XC_vuSatRWjn02nZIz3N1t8jsZz7HBr2U,101
+stringzilla-4.1.0.dist-info/entry_points.txt,sha256=Xb61_R-C3KmzJc7YSQ3lf6xJGw-cE8CeeMaFuAGiVRw,64
+stringzilla-4.1.0.dist-info/licenses/LICENSE,sha256=HrhfyXIkWY2tGFK11kg7vPCqhgh5DcxleloqdhrpyMY,11558
+stringzilla-4.1.0.dist-info/top_level.txt,sha256=U1mcf1aXFqpjrfKgss9_dJWQaMOA-h9IR790RYAeT_Q,16
+stringzilla.cp313-win_amd64.pyd,sha256=RLkKcGH5mQs0-z7IuML7CgiNvOBhKGKi2QhqKzZjmbA,144896

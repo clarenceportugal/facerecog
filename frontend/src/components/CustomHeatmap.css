@@ -1,0 +1,29 @@
+.react-calendar-heatmap text {
+    font-size: 5px; /* Make weekday labels smaller */
+    dominant-baseline: hanging; /* Aligns text better */
+    transform: translateY(-8px);
+}
+
+.react-calendar-heatmap .react-calendar-heatmap-week > rect {
+    width: 8px;
+    height: 8px;
+    rx: 1px; /* optional: make corners a little rounded */
+    ry: 2px;
+}
+
+.react-calendar-heatmap .react-calendar-heatmap-week {
+    margin: 1px;
+}
+
+.react-calendar-heatmap {
+    width: 100%;
+    max-width: 500px; /* smaller container */
+    margin: auto;
+    margin-bottom: 0 !important;
+}
+
+.react-calendar-heatmap svg {
+    display: block;
+    margin: 0 auto;
+    padding-bottom: 0 !important; /* kill bottom padding */
+}
