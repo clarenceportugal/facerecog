@@ -1,3 +1,4 @@
+//authRoutes.ts
 import express, { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -976,7 +977,7 @@ router.get("/schedules", async (req: Request, res: Response): Promise<void> => {
 router.get(
   "/schedules-faculty",
   async (req: Request, res: Response): Promise<void> => {
-    const { facultyId } = req.query;
+    const { facultyId, semester } = req.query;
 
     if (!facultyId) {
       res.status(400).json({ message: "facultyId is required" });
@@ -989,12 +990,95 @@ router.get(
         return;
       }
 
-      const schedules = await Schedule.find({ instructor: facultyId }).populate(
-        {
-          path: "section", // assuming 'section' is the field that references a section
-          select: "course section block", // select the fields you need (course, section, block)
+      const filter: any = { instructor: facultyId };
+
+      if (semester && typeof semester === "string" && semester.trim() !== "") {
+        const semStr = semester.trim();
+
+        // Works without named groups
+        const semMatch = semStr.match(
+          /^([\d]{1,2}(?:st|nd|rd|th)\s+Semester|1st\s+Semester|2nd\s+Semester)?\s*,?\s*(?:AY\s*)?(\d{4}-\d{4})$/i
+        );
+
+        if (semMatch) {
+          const semesterNameRaw = (semMatch[1] || "").trim();
+          const academicYear = (semMatch[2] || "").trim();
+
+          let semesterName = semesterNameRaw;
+          if (!semesterName) {
+            if (/^1/i.test(semStr)) semesterName = "1st Semester";
+            else if (/^2/i.test(semStr)) semesterName = "2nd Semester";
+          }
+
+          const ayParts = academicYear.split("-");
+          let computedStartISO: string | null = null;
+          let computedEndISO: string | null = null;
+
+          if (ayParts.length === 2) {
+            const startYear = parseInt(ayParts[0], 10);
+            const endYear = parseInt(ayParts[1], 10);
+
+            if (/^1/i.test(semesterName)) {
+              computedStartISO = `${startYear}-08-01T00:00:00.000Z`;
+              computedEndISO = `${startYear}-12-31T23:59:59.999Z`;
+            } else if (/^2/i.test(semesterName)) {
+              computedStartISO = `${endYear}-01-01T00:00:00.000Z`;
+              computedEndISO = `${endYear}-05-31T23:59:59.999Z`;
+            }
+          }
+
+          const semesterClauses: any[] = [];
+
+          if (semesterName && academicYear) {
+            semesterClauses.push({
+              semester: { $regex: new RegExp(`^${semesterName}`, "i") },
+              academicYear: academicYear,
+            });
+          }
+
+          if (computedStartISO && computedEndISO) {
+            semesterClauses.push({
+              $or: [
+                {
+                  semesterStartDate: {
+                    $lte: computedEndISO,
+                    $gte: computedStartISO,
+                  },
+                },
+                {
+                  semesterEndDate: {
+                    $lte: computedEndISO,
+                    $gte: computedStartISO,
+                  },
+                },
+                {
+                  $and: [
+                    { semesterStartDate: { $lte: computedStartISO } },
+                    { semesterEndDate: { $gte: computedEndISO } },
+                  ],
+                },
+              ],
+            });
+          }
+
+          if (semesterClauses.length > 0) {
+            filter.$and = filter.$and || [];
+            filter.$and.push({ $or: semesterClauses });
+          } else {
+            console.warn("Could not parse semester query:", semStr);
+          }
+        } else {
+          filter.$and = filter.$and || [];
+          filter.$and.push({
+            semester: { $regex: new RegExp(semester.trim(), "i") },
+          });
         }
-      );
+      }
+
+      const schedules = await Schedule.find(filter).populate({
+        path: "section",
+        select: "course section block",
+      });
 
       res.json(schedules);
     } catch (error) {
@@ -1003,6 +1087,7 @@ router.get(
     }
   }
 );
+
 
 // ADD NEW SCHEDULE ROUTE
 router.post(
@@ -1246,32 +1331,41 @@ router.post(
       const text = result.value;
       console.log("📄 Extracted text (first 500 chars):", text.slice(0, 500));
 
+      // remove temp file
       fs.unlink(filePath, () => {
         console.log("🧹 Temp file cleaned up.");
       });
 
+      // parse semester + AY (same regex you had)
       const semAyMatch = text.match(
         /(\d(?:ST|ND|RD|TH))\s+Semester,\s*AY\s*(\d{4})-(\d{4})/i
       );
-      let semester = "TBD";
+      let semesterLabel = "TBD";
       let semesterStartDate = "TBD";
       let semesterEndDate = "TBD";
+      let academicYear = "TBD";
 
       if (semAyMatch) {
-        semester = semAyMatch[1].toUpperCase();
+        const semRaw = semAyMatch[1].toUpperCase();
         const startYear = parseInt(semAyMatch[2], 10);
         const endYear = parseInt(semAyMatch[3], 10);
+        academicYear = `${semAyMatch[2]}-${semAyMatch[3]}`;
 
-        if (semester === "1ST") {
+        // normalize semesterLabel to "1st Semester" or "2nd Semester"
+        if (/1/i.test(semRaw)) semesterLabel = "1st Semester";
+        else if (/2/i.test(semRaw)) semesterLabel = "2nd Semester";
+        else semesterLabel = semRaw;
+
+        if (semesterLabel.toLowerCase().startsWith("1")) {
           semesterStartDate = `${startYear}-08-01`;
           semesterEndDate = `${startYear}-12-15`;
-        } else if (semester === "2ND") {
+        } else if (semesterLabel.toLowerCase().startsWith("2")) {
           semesterStartDate = `${endYear}-01-10`;
           semesterEndDate = `${endYear}-05-30`;
         }
 
         console.log(
-          `🗓 Parsed semester: ${semester}, AY: ${startYear}-${endYear}`
+          `🗓 Parsed semester: ${semesterLabel}, AY: ${academicYear}`
         );
         console.log(
           `🗓 Semester dates: ${semesterStartDate} to ${semesterEndDate}`
@@ -1280,6 +1374,7 @@ router.post(
         console.warn("⚠️ Semester and AY not found, using default dates.");
       }
 
+      // parse instructor name
       const instructorNameMatch = text.match(/Name of Instructor:\s*(.*)/i);
       const instructorFullName = instructorNameMatch
         ? instructorNameMatch[1].trim().toUpperCase()
@@ -1309,7 +1404,7 @@ router.post(
         `${instructor.first_name} ${instructor.middle_name} ${instructor.last_name}`
       );
 
-      // Extract only the portion of text after the instructor's name
+      // extract lines after instructor label
       const instructorIndex = text.toLowerCase().indexOf("name of instructor:");
       if (instructorIndex === -1) {
         res
@@ -1318,7 +1413,6 @@ router.post(
         return;
       }
 
-      // Slice the text starting from after the instructor's name
       const linesAfterInstructor = text
         .slice(instructorIndex)
         .split("\n")
@@ -1330,6 +1424,7 @@ router.post(
         linesAfterInstructor.length
       );
 
+      // parsing into schedules (same logic you had)
       let currentCourseCode = "";
       let currentCourseTitle = "";
       let currentSection = "";
@@ -1353,24 +1448,9 @@ router.post(
           const courseLine = linesAfterInstructor[i + 1] || "";
           currentCourseTitle =
             linesAfterInstructor[i + 1]?.split("(")[0]?.trim() || "";
-          console.log(
-            "📘 Found course:",
-            currentCourseCode,
-            "-",
-            currentCourseTitle
-          );
 
           const sectionMatch = courseLine.match(/\(([^)]+)\)/);
           currentSection = sectionMatch ? sectionMatch[1].trim() : "Unknown";
-
-          console.log(
-            "📘 Found course:",
-            currentCourseCode,
-            "-",
-            currentCourseTitle,
-            "| Section:",
-            currentSection
-          );
           continue;
         }
 
@@ -1410,24 +1490,83 @@ router.post(
             days,
             displaySection: `${sectionDoc.course} ${sectionDoc.section}${sectionDoc.block}`,
           });
-
-          console.log(
-            `🗓 Added ${type} for ${currentCourseCode}: ${startTime}–${endTime} on ${dayStr}`
-          );
         }
       }
 
-      console.log(
-        "📤 Parsed schedules ready to return:",
-        JSON.stringify(schedules, null, 2)
-      );
+      // ---------- NEW: check DB for existing schedules for this instructor + semester ----------
+      let existing = false;
+      let existingCount = 0;
+      let existingSchedulesPreview: any[] = [];
 
+      // prefer checking by explicit semesterStartDate/semesterEndDate if parsed
+      if (
+        semesterStartDate !== "TBD" &&
+        semesterEndDate !== "TBD" &&
+        semesterStartDate &&
+        semesterEndDate
+      ) {
+        existingCount = await Schedule.countDocuments({
+          instructor: instructor._id,
+          semesterStartDate,
+          semesterEndDate,
+        });
+
+        if (existingCount > 0) {
+          existing = true;
+          existingSchedulesPreview = await Schedule.find({
+            instructor: instructor._id,
+            semesterStartDate,
+            semesterEndDate,
+          })
+            .limit(20)
+            .populate({ path: "section", select: "course section block" })
+            .lean();
+        }
+      } else if (semesterLabel !== "TBD" && academicYear !== "TBD") {
+        // fallback: check by semester label + academicYear
+        existingCount = await Schedule.countDocuments({
+          instructor: instructor._id,
+          semester: { $regex: new RegExp(semesterLabel, "i") },
+          academicYear: academicYear,
+        });
+
+        if (existingCount > 0) {
+          existing = true;
+          existingSchedulesPreview = await Schedule.find({
+            instructor: instructor._id,
+            semester: { $regex: new RegExp(semesterLabel, "i") },
+            academicYear: academicYear,
+          })
+            .limit(20)
+            .populate({ path: "section", select: "course section block" })
+            .lean();
+        }
+      } else {
+        // last resort: try to find any schedules for instructor in same year window
+        existingCount = await Schedule.countDocuments({ instructor: instructor._id });
+        if (existingCount > 0) {
+          existing = true;
+          existingSchedulesPreview = await Schedule.find({ instructor: instructor._id })
+            .limit(10)
+            .populate({ path: "section", select: "course section block" })
+            .lean();
+        }
+      }
+
+      console.log("Existing schedules found:", existingCount);
+
+      // return preview + existing info to frontend so it may ask user to replace or cancel
       res.status(200).json({
         message: "Preview parsed data",
         data: schedules,
-        instructorName: `${instructor.last_name}, ${instructor.first_name} ${instructor.middle_name} `,
-        academicYear: `${semAyMatch?.[2]}-${semAyMatch?.[3]}`,
-        semester: semester,
+        instructorName: `${instructor.last_name}, ${instructor.first_name} ${instructor.middle_name || ""}`.trim(),
+        academicYear: academicYear,
+        semester: semesterLabel,
+        semesterStartDate,
+        semesterEndDate,
+        existing,
+        existingCount,
+        existingSchedulesPreview, // optional small preview for UI
       });
     } catch (error) {
       console.error("🔥 Error while processing document:", error);
@@ -1436,18 +1575,68 @@ router.post(
   }
 );
 
+// ----------------------- confirmSchedules (support replace) -----------------------
 router.post(
   "/confirmSchedules",
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const schedules = req.body.schedules;
+      const { schedules, replace, semesterStartDate, semesterEndDate, instructorId, semester, academicYear } =
+        req.body;
+
+      if (!Array.isArray(schedules) || schedules.length === 0) {
+        res.status(400).json({ message: "No schedules provided" });
+        return;
+      }
+
+      // Determine which instructor / semester to target for replace
+      const instructorToUse =
+        instructorId || (schedules[0] && schedules[0].instructor) || null;
+
+      // Prefer explicit dates if provided, else use semester+academicYear from body or schedules data
+      const startDateToUse = semesterStartDate || (schedules[0] && schedules[0].semesterStartDate);
+      const endDateToUse = semesterEndDate || (schedules[0] && schedules[0].semesterEndDate);
+      const semesterLabel = semester || (schedules[0] && schedules[0].semester);
+      const ayLabel = academicYear || (schedules[0] && schedules[0].academicYear);
+
+      if (replace) {
+        if (!instructorToUse) {
+          res.status(400).json({ message: "Missing instructor for replace operation" });
+          return;
+        }
+
+        // Try delete by explicit dates first
+        if (startDateToUse && endDateToUse && startDateToUse !== "TBD" && endDateToUse !== "TBD") {
+          await Schedule.deleteMany({
+            instructor: instructorToUse,
+            semesterStartDate: startDateToUse,
+            semesterEndDate: endDateToUse,
+          });
+        } else if (semesterLabel && ayLabel) {
+          // fallback: delete by semester label + academicYear
+          await Schedule.deleteMany({
+            instructor: instructorToUse,
+            semester: { $regex: new RegExp(semesterLabel, "i") },
+            academicYear: ayLabel,
+          });
+        } else {
+          // last resort: delete all schedules for the instructor (BE CAREFUL)
+          // You may want to avoid this unless you are sure. For safety we won't do broad delete automatically.
+          console.warn("Replace requested but semester/date info is missing - aborting delete to avoid broad removal.");
+          res.status(400).json({ message: "Missing semester/date info for replace operation" });
+          return;
+        }
+      }
+
+      // Insert new schedules
       const saved = await Schedule.insertMany(schedules);
-      res
-        .status(201)
-        .json({ message: "Schedules saved successfully", data: saved });
+
+      res.status(replace ? 200 : 201).json({
+        message: replace ? "Schedules replaced successfully" : "Schedules saved successfully",
+        data: saved,
+      });
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: "Failed to save schedules" });
+      console.error("Failed to save schedules:", error);
+      res.status(500).json({ message: "Failed to save schedules", error });
     }
   }
 );

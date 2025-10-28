@@ -1,3 +1,4 @@
+//components/Info Modal.tsx
 import React, { useEffect, useState } from "react";
 import {
   Modal,
@@ -14,17 +15,22 @@ import {
   CircularProgress,
   IconButton,
   Avatar,
+  Tooltip,
+  TextField,
+  MenuItem,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import PersonIcon from "@mui/icons-material/Person";
 import CalendarHeatmap from "react-calendar-heatmap";
-import Tooltip from "@mui/material/Tooltip";
 import "react-calendar-heatmap/dist/styles.css";
 import "./CustomHeatmap.css";
 import axios from "axios";
 import Swal from "sweetalert2";
 import FileUploadIcon from "@mui/icons-material/FileUpload";
 import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
+import FullscreenIcon from "@mui/icons-material/Fullscreen";
+import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import dayjs from "dayjs";
 import isBetween from "dayjs/plugin/isBetween";
 import weekday from "dayjs/plugin/weekday";
@@ -53,23 +59,66 @@ interface Schedule {
     thu: boolean;
     fri: boolean;
     sat: boolean;
+    [key: string]: boolean;
   };
   startTime: string;
   endTime: string;
   room: string;
+  [key: string]: any;
 }
 
 const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
-  const [schedules, setSchedules] = useState([]);
-  const [logs, setLogs] = useState([]);
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [isHeatmapMaximized, setIsHeatmapMaximized] = useState(false);
   const today = new Date();
   const startDate = new Date(today.getFullYear(), 0, 1);
   const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
   const [openAddManualModal, setOpenAddManualModal] = useState(false);
 
+  // NEW: semester dropdown options and selected state
+  const semesterOptions = [
+    "1st Semester, AY 2024-2025",
+    "2nd Semester, AY 2024-2025",
+    "1st Semester, AY 2025-2026",
+    "2nd Semester, AY 2025-2026",
+    "1st Semester, AY 2026-2027",
+    "2nd Semester, AY 2026-2027",
+  ];
+  const [selectedSemester, setSelectedSemester] = useState<string>(
+    "1st Semester, AY 2025-2026"
+  );
+
+  // Reusable fetchSchedules so we can call it after uploads and modal close
+  const fetchSchedules = async () => {
+    if (!faculty?._id) return;
+    setIsLoading(true);
+    try {
+      // include semester as a query param so backend can filter if supported
+      const response = await axios.get(
+        "http://localhost:5000/api/auth/schedules-faculty",
+        {
+          params: { facultyId: faculty._id, semester: selectedSemester },
+        }
+      );
+      console.log("Received schedule data:", response.data);
+      setSchedules(response.data);
+    } catch (error) {
+      console.error("Error fetching schedules:", error);
+      setSchedules([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleOpenAddManual = () => setOpenAddManualModal(true);
-  const handleCloseAddManual = () => setOpenAddManualModal(false);
+  // Close manual modal and refresh schedules immediately
+  const handleCloseAddManual = async () => {
+    setOpenAddManualModal(false);
+    await fetchSchedules();
+  };
 
   const handleAddSchedule = async () => {
     const { value: file } = await Swal.fire({
@@ -89,66 +138,144 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
       },
     });
 
-    if (file) {
-      const formData = new FormData();
-      formData.append("scheduleDocument", file);
+    if (!file) return;
 
-      try {
-        const { data } = await axios.post(
-          "https://eduvision-dura.onrender.com/api/auth/uploadScheduleDocument",
-          formData,
-          {
-            headers: {
-              "Content-Type": "multipart/form-data",
-            },
-          }
-        );
+    const formData = new FormData();
+    formData.append("scheduleDocument", file);
 
-        const scheduleData: Schedule[] = data.data;
+    // Start uploading indicator
+    setUploading(true);
 
-        let tableHtml = `
-          <table style="width:100%; border: 1px solid #ddd; border-collapse: collapse;">
-            <thead>
-              <tr>
-                <th>Course Code</th>
-                <th>Course Title</th>
-                <th>Section</th>
-                <th>Days</th>
-                <th>Time</th>
-                <th>Room</th>
-              </tr>
-            </thead>
-            <tbody>
-        `;
+    try {
+      const { data } = await axios.post(
+        "http://localhost:5000/api/auth/uploadScheduleDocument",
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
 
-        scheduleData.forEach((schedule: Schedule) => {
-          const days = Object.keys(schedule.days)
-            .filter((day) => schedule.days[day as keyof typeof schedule.days])
-            .join(", ");
+      const scheduleData: Schedule[] = data.data;
+      const semesterStartDate = data.semesterStartDate;
+      const semesterEndDate = data.semesterEndDate;
+      const academicYear = data.academicYear;
+      const semester = data.semester;
+      const instructorName = data.instructorName;
+      const existing = data.existing;
+      const existingCount = data.existingCount || 0;
 
-          tableHtml += `
-            <tr>
-              <td>${schedule.courseCode}</td>
-              <td>${schedule.courseTitle}</td>
-              <td>${schedule.displaySection}</td>
-              <td>${days}</td>
-              <td>${schedule.startTime} – ${schedule.endTime}</td>
-              <td>${schedule.room}</td>
-            </tr>
-          `;
+      // Build preview table HTML
+      let tableHtml = `
+      <table style="width:100%; border: 1px solid #ddd; border-collapse: collapse;">
+        <thead>
+          <tr>
+            <th>Course Code</th>
+            <th>Course Title</th>
+            <th>Section</th>
+            <th>Days</th>
+            <th>Time</th>
+            <th>Room</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+      scheduleData.forEach((schedule: Schedule) => {
+        const days = Object.keys(schedule.days || {})
+          .filter((day) => (schedule.days as any)[day])
+          .join(", ");
+
+        tableHtml += `
+        <tr>
+          <td>${schedule.courseCode}</td>
+          <td>${schedule.courseTitle}</td>
+          <td>${schedule.displaySection}</td>
+          <td>${days}</td>
+          <td>${schedule.startTime} – ${schedule.endTime}</td>
+          <td>${schedule.room}</td>
+        </tr>
+      `;
+      });
+
+      tableHtml += `</tbody></table>`;
+
+      // If existing schedules exist for that semester, prompt to replace or cancel
+      if (existing) {
+        // Prefer the selectedSemester label (if you have it) else fall back to parsed semester
+        const semesterLabel =
+          typeof selectedSemester === "string" && selectedSemester
+            ? selectedSemester
+            : `${semester}, AY ${academicYear}`;
+
+        const replaceResult = await Swal.fire({
+          title: "Existing schedules detected",
+          html: `
+          <p>There are <strong>${existingCount}</strong> schedules already stored for <strong>${semesterLabel}</strong>.</p>
+          <p style="color: #b71c1c;"><strong>Warning:</strong> Uploading now will <em>overwrite</em> those schedules for this semester.</p>
+          <p>Are you sure you want to overwrite the existing schedules for <strong>${semesterLabel}</strong>?</p>
+          <div style="margin-top:10px">
+            <strong>Instructor:</strong> ${instructorName}<br/>
+            <strong>Semester & AY (parsed):</strong> ${semester}, AY ${academicYear}
+          </div>
+          <hr />
+          ${tableHtml}
+        `,
+          showCancelButton: true,
+          showDenyButton: true,
+          denyButtonText: "Cancel Upload",
+          confirmButtonText: "Overwrite Existing",
+          width: 900,
+          scrollbarPadding: false,
         });
 
-        tableHtml += `</tbody></table>`;
+        if (replaceResult.isDenied || replaceResult.isDismissed) {
+          // user cancelled -> stop uploading indicator and return
+          setUploading(false);
+          return;
+        }
+
+        if (replaceResult.isConfirmed) {
+          // Proceed with replace: send replace flag and semester dates
+          await axios.post("http://localhost:5000/api/auth/confirmSchedules", {
+            schedules: scheduleData,
+            replace: true,
+            semesterStartDate,
+            semesterEndDate,
+          });
+
+          await Swal.fire({
+            icon: "success",
+            title: "Schedules Replaced!",
+            text: `Existing schedules for ${semesterLabel} were replaced with the uploaded ones.`,
+            timer: 2500, // ⏰ auto-close after 2.5 seconds
+            showConfirmButton: false, // hide the OK button
+          });
+
+          // REFRESH schedules immediately
+          await fetchSchedules();
+
+          // Make sure uploading indicator is cleared (although finally also clears it)
+          setUploading(false);
+          return;
+        }
+      } else {
+        // No existing schedules: show confirm preview (original flow)
+        const semesterLabel =
+          typeof selectedSemester === "string" && selectedSemester
+            ? selectedSemester
+            : `${semester}, AY ${academicYear}`;
 
         const confirmResult = await Swal.fire({
           title: "Confirm upload schedule?",
           html: `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <p><strong>Instructor:</strong> ${data.instructorName}</p>
-              <p><strong>Semester & AY:</strong> ${data.semester}, AY ${data.academicYear}</p>
-            </div>
-            ${tableHtml}
-          `,
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <p><strong>Instructor:</strong> ${instructorName}</p>
+            <p><strong>Semester & AY:</strong> ${semesterLabel}</p>
+          </div>
+          ${tableHtml}
+        `,
           showCancelButton: true,
           confirmButtonText: "Confirm Upload",
           width: 800,
@@ -156,57 +283,52 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
         });
 
         if (confirmResult.isConfirmed) {
-          await axios.post("https://eduvision-dura.onrender.com/api/auth/confirmSchedules", {
+          await axios.post("http://localhost:5000/api/auth/confirmSchedules", {
             schedules: scheduleData,
+            replace: false,
+            semesterStartDate,
+            semesterEndDate,
           });
 
-          Swal.fire({
+          await Swal.fire({
             icon: "success",
             title: "Schedules Uploaded!",
             text: "The schedules have been successfully uploaded to the database.",
           });
-        }
-      } catch (error: unknown) {
-        if (axios.isAxiosError(error)) {
-          Swal.fire({
-            icon: "error",
-            title: "Upload Failed",
-            text: error.response?.data?.message || "Something went wrong.",
-          });
+
+          // REFRESH schedules immediately
+          await fetchSchedules();
         } else {
-          Swal.fire({
-            icon: "error",
-            title: "Upload Failed",
-            text: "An unknown error occurred.",
-          });
+          // cancelled preview
+          setUploading(false);
+          return;
         }
       }
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        Swal.fire({
+          icon: "error",
+          title: "Upload Failed",
+          text: error.response?.data?.message || "Something went wrong.",
+        });
+      } else {
+        Swal.fire({
+          icon: "error",
+          title: "Upload Failed",
+          text: "An unknown error occurred.",
+        });
+      }
+    } finally {
+      // Stop uploading indicator no matter what happened
+      setUploading(false);
     }
   };
 
+  // initial fetch for schedules — re-run when faculty or selectedSemester changes
   useEffect(() => {
-    const fetchSchedules = async () => {
-      if (!faculty?._id) return;
-      setIsLoading(true);
-
-      try {
-        const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/schedules-faculty",
-          {
-            params: { facultyId: faculty._id },
-          }
-        );
-        console.log("Received schedule data:", response.data);
-        setSchedules(response.data);
-      } catch (error) {
-        console.error("Error fetching schedules:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchSchedules();
-  }, [faculty?._id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faculty?._id, selectedSemester]);
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -214,7 +336,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
 
       try {
         const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/logs/faculty-today",
+          "http://localhost:5000/api/auth/logs/faculty-today",
           {
             params: { facultyId: faculty._id },
           }
@@ -228,6 +350,26 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
 
     fetchLogs();
   }, [faculty?._id]);
+
+  // When heatmap is maximized, disable body scroll and bind Esc key to restore
+  useEffect(() => {
+    if (isHeatmapMaximized) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") setIsHeatmapMaximized(false);
+      };
+      window.addEventListener("keydown", onKey);
+
+      return () => {
+        document.body.style.overflow = prevOverflow;
+        window.removeEventListener("keydown", onKey);
+      };
+    }
+    // no cleanup necessary when not maximized
+    return;
+  }, [isHeatmapMaximized]);
 
   if (!faculty) return null;
 
@@ -386,9 +528,29 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
           <Box
             sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}
           >
-            <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1 }}>
-              2nd Semester, AY 2024-2025
-            </Typography>
+            {/* REPLACED heading with Semester dropdown */}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <TextField
+                select
+                size="small"
+                label="Semester"
+                value={selectedSemester}
+                onChange={(e) => setSelectedSemester(e.target.value)}
+                sx={{ minWidth: 260 }}
+                SelectProps={{ IconComponent: ArrowDropDownIcon }}
+              >
+                {semesterOptions.map((opt) => (
+                  <MenuItem key={opt} value={opt}>
+                    {opt}
+                  </MenuItem>
+                ))}
+              </TextField>
+
+              <Typography variant="subtitle2" color="text.secondary">
+                (select semester to view schedules)
+              </Typography>
+            </Box>
+
             {/* Faculty Information Table */}
             <Box
               component={Paper}
@@ -417,6 +579,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
               >
                 <EditIcon />
               </IconButton>
+
               <Box sx={{ display: "flex", gap: 2 }}>
                 <Typography variant="body1" sx={{ fontWeight: "bold" }}>
                   Highest Educational Attainment:
@@ -456,38 +619,109 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
             </Box>
 
             {/* Faculty Activity Heatmap */}
+            {/* wrapper Box: changes size/position when maximized */}
             <Box
-              sx={{
-                p: 2,
-                border: "1px solid #3D1308",
-                borderRadius: 2,
-                backgroundColor: "#FFF",
-                flexShrink: 0,
-                height: "auto",
-                textAlign: "center",
-              }}
+              sx={
+                isHeatmapMaximized
+                  ? {
+                      position: "fixed",
+                      top: "50%",
+                      left: "50%",
+                      transform: "translate(-50%, -50%)",
+                      zIndex: 1400,
+                      width: "90vw",
+                      height: "80vh",
+                      p: 3,
+                      borderRadius: 2,
+                      backgroundColor: "#FFF",
+                      border: "1px solid #3D1308",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                      boxShadow: 20,
+                    }
+                  : {
+                      p: 2,
+                      border: "1px solid #3D1308",
+                      borderRadius: 2,
+                      backgroundColor: "#FFF",
+                      flexShrink: 0,
+                      height: "auto",
+                      textAlign: "center",
+                      position: "relative",
+                    }
+              }
             >
-              <Typography variant="h6">Faculty Activity</Typography>
-              <CalendarHeatmap
-                startDate={startDate}
-                endDate={endDate}
-                values={values}
-                classForValue={(value) => {
-                  if (!value || value.count === 0) {
-                    return "color-empty";
-                  }
-                  return `color-github-${value.count}`;
+              {/* maximize / minimize button at top-right */}
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 8,
+                  right: 8,
+                  display: "flex",
+                  gap: 1,
                 }}
-                tooltipDataAttrs={(value) => {
-                  if (value && value.date) {
-                    return {
-                      "data-tip": `${value.date}: ${value.count} activities`,
-                    } as unknown as CalendarHeatmap.TooltipDataAttrs;
-                  }
-                  return {} as CalendarHeatmap.TooltipDataAttrs;
-                }}
-                showWeekdayLabels
-              />
+              >
+                <Tooltip
+                  title={isHeatmapMaximized ? "Minimize" : "Maximize"}
+                  arrow
+                >
+                  <IconButton
+                    size="small"
+                    onClick={() => setIsHeatmapMaximized((s) => !s)}
+                    aria-label={
+                      isHeatmapMaximized
+                        ? "minimize heatmap"
+                        : "maximize heatmap"
+                    }
+                  >
+                    {isHeatmapMaximized ? (
+                      <FullscreenExitIcon />
+                    ) : (
+                      <FullscreenIcon />
+                    )}
+                  </IconButton>
+                </Tooltip>
+              </Box>
+
+              <Typography variant="h6" sx={{ textAlign: "center" }}>
+                Faculty Activity
+              </Typography>
+
+              <Box
+                sx={
+                  isHeatmapMaximized
+                    ? {
+                        flex: 1,
+                        overflow: "auto",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }
+                    : { width: "100%" }
+                }
+              >
+                <CalendarHeatmap
+                  startDate={startDate}
+                  endDate={endDate}
+                  values={values}
+                  classForValue={(value) => {
+                    if (!value || value.count === 0) {
+                      return "color-empty";
+                    }
+                    return `color-github-${value.count}`;
+                  }}
+                  tooltipDataAttrs={(value) => {
+                    if (value && value.date) {
+                      return {
+                        "data-tip": `${value.date}: ${value.count} activities`,
+                      } as unknown as CalendarHeatmap.TooltipDataAttrs;
+                    }
+                    return {} as CalendarHeatmap.TooltipDataAttrs;
+                  }}
+                  showWeekdayLabels
+                />
+              </Box>
             </Box>
           </Box>
 
@@ -507,23 +741,38 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
               </Typography>
               <Box sx={{ display: "flex", gap: 1 }}>
                 <Tooltip title="Upload schedule manually" arrow>
-                  <IconButton
-                    sx={{ color: "#9F2042" }}
-                    onClick={handleOpenAddManual}
-                  >
-                    <AddCircleOutlineIcon />
-                  </IconButton>
+                  <span>
+                    <IconButton
+                      sx={{ color: "#9F2042" }}
+                      onClick={handleOpenAddManual}
+                      disabled={uploading}
+                    >
+                      <AddCircleOutlineIcon />
+                    </IconButton>
+                  </span>
                 </Tooltip>
-                <Tooltip title="Upload schedule by docx" arrow>
-                  <IconButton
-                    sx={{ color: "#9F2042" }}
-                    onClick={handleAddSchedule}
-                  >
-                    <FileUploadIcon />
-                  </IconButton>
+                <Tooltip
+                  title={uploading ? "Uploading..." : "Upload schedule by docx"}
+                  arrow
+                >
+                  <span>
+                    <IconButton
+                      sx={{ color: "#9F2042" }}
+                      onClick={handleAddSchedule}
+                      disabled={uploading}
+                      aria-label="upload schedule"
+                    >
+                      {uploading ? (
+                        <CircularProgress size={20} />
+                      ) : (
+                        <FileUploadIcon />
+                      )}
+                    </IconButton>
+                  </span>
                 </Tooltip>
               </Box>
             </Box>
+
             {/* Faculty Schedules Table */}
             <TableContainer
               component={Paper}
@@ -584,7 +833,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                                 sat: "S",
                               };
 
-                              return Object.entries(schedule.days)
+                              return Object.entries(schedule.days || {})
                                 .filter(([_, isActive]) => isActive)
                                 .map(
                                   ([day]) =>
@@ -630,6 +879,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
         >
           Close
         </Button>
+
         <AddManualScheduleModal
           open={openAddManualModal}
           onClose={handleCloseAddManual}

@@ -1,29 +1,60 @@
-.react-calendar-heatmap text {
-    font-size: 5px; /* Make weekday labels smaller */
-    dominant-baseline: hanging; /* Aligns text better */
-    transform: translateY(-8px);
+/* base heatmap styles (keeps small default) */
+.heatmap-wrapper .react-calendar-heatmap text {
+  font-size: 5px;
+  dominant-baseline: hanging;
+  transform: translateY(-8px);
 }
 
-.react-calendar-heatmap .react-calendar-heatmap-week > rect {
-    width: 8px;
-    height: 8px;
-    rx: 1px; /* optional: make corners a little rounded */
-    ry: 2px;
+/* default rect size (keeps small view) */
+.heatmap-wrapper .react-calendar-heatmap .react-calendar-heatmap-week > rect {
+  width: 8px !important;
+  height: 8px !important;
+  rx: 1px;
+  ry: 2px;
 }
 
-.react-calendar-heatmap .react-calendar-heatmap-week {
-    margin: 1px;
+/* default container width (desktop default) */
+.heatmap-wrapper .react-calendar-heatmap {
+  width: 100%;
+  max-width: 500px;
+  margin: auto;
 }
 
-.react-calendar-heatmap {
-    width: 100%;
-    max-width: 500px; /* smaller container */
-    margin: auto;
-    margin-bottom: 0 !important;
+/* SVG layout tweaks */
+.heatmap-wrapper .react-calendar-heatmap svg {
+  display: block;
+  margin: 0 auto;
+  padding-bottom: 0 !important;
 }
 
-.react-calendar-heatmap svg {
-    display: block;
-    margin: 0 auto;
-    padding-bottom: 0 !important; /* kill bottom padding */
+/* ==== Maximized state: override sizes so the heatmap content enlarges ==== */
+.heatmap-wrapper.maximized .react-calendar-heatmap {
+  max-width: none;            /* allow full width */
+  width: 100%;
+  height: 100%;
+}
+
+/* Resize rects inside svg when maximized */
+.heatmap-wrapper.maximized .react-calendar-heatmap .react-calendar-heatmap-week > rect {
+  width: 18px !important;
+  height: 18px !important;
+}
+
+/* bigger spacing between rects when maximized */
+.heatmap-wrapper.maximized .react-calendar-heatmap .react-calendar-heatmap-week {
+  margin: 6px !important;
+}
+
+/* larger labels when maximized */
+.heatmap-wrapper.maximized .react-calendar-heatmap text {
+  font-size: 12px !important;
+  transform: none !important;
+  dominant-baseline: middle;
+}
+
+/* Make the svg use the available space (helps centering) */
+.heatmap-wrapper.maximized .react-calendar-heatmap svg {
+  width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
 }

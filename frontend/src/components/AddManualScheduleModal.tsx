@@ -1,3 +1,4 @@
+//AddManualScheduleModal.tsx
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -184,20 +185,40 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
   }, []);
 
   useEffect(() => {
-    const fetchSemesters = async () => {
-      try {
-        const res = await axios.get(
-          "http://localhost:5000/api/auth/all-semesters"
-        );
-        // ✅ Use the data array, not the whole object
-        setSemesters(res.data.data);
-      } catch (error) {
-        console.error("Error fetching semesters:", error);
-      }
-    };
+  const fetchSemesters = async () => {
+    try {
+      const res = await axios.get("http://localhost:5000/api/auth/all-semesters");
 
-    fetchSemesters();
-  }, []);
+      // ✅ Extract semester data
+      const data = res.data.data || [];
+
+      // ✅ Find the active semester
+      const activeSemester = data.find((s: any) => s.isActive);
+
+      setSemesters(data);
+
+      // ✅ Automatically set the form to the active semester
+      if (activeSemester) {
+        setFormData((prev) => ({
+          ...prev,
+          semesterStartDate: activeSemester.startDate || "",
+          semesterEndDate: activeSemester.endDate || "",
+        }));
+
+        // ✅ Also set the default value in the UI
+        setSelectedSemester(activeSemester);
+      }
+    } catch (error) {
+      console.error("Error fetching semesters:", error);
+    }
+  };
+
+  fetchSemesters();
+}, []);
+
+// ✅ Local state for the selected semester
+const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
+
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -307,6 +328,7 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
           <Grid item xs={12}>
             <Autocomplete
               options={semesters} // now an array
+              value={selectedSemester}
               getOptionLabel={(option) =>
                 `${option.semesterName} - AY ${option.academicYear}`
               }

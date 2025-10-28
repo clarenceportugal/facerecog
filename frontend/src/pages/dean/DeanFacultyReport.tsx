@@ -1,3 +1,4 @@
+//Dean Faculty Report
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import {
   Typography,
@@ -249,65 +250,65 @@ const DeanFacultyReports: React.FC = React.memo(() => {
 
   // 🔹 Generate Report
   const handleGenerateReport = async () => {
-  try {
-    if (!selectedCourse) {
+    try {
+      if (!selectedCourse) {
+        Swal.fire({
+          icon: "warning",
+          title: "No Course Selected",
+          text: "Please select a course before generating the report.",
+        });
+        return;
+      }
+
       Swal.fire({
-        icon: "warning",
-        title: "No Course Selected",
-        text: "Please select a course before generating the report.",
+        title: "Generating Report...",
+        text: "Please wait while we prepare your report.",
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading(),
       });
-      return;
+
+      const response = await axios.post(
+        "http://localhost:5000/api/auth/dean-generate-monthly-department-logs",
+        {
+          courseCode: selectedCourse, // ✅ Send selected course
+          selectedYear: selectedYear || null,
+          selectedMonth: selectedMonth || null,
+        },
+        { responseType: "blob" }
+      );
+
+      // 🧾 Use course code and selected filters in the filename
+      const courseLabel = selectedCourse || "Course";
+      const yearLabel = selectedYear ? `_${selectedYear}` : "";
+      const monthLabel = selectedMonth
+        ? `_${new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
+            month: "long",
+          })}`
+        : "";
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${courseLabel}_AttendanceReport${yearLabel}${monthLabel}.docx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+
+      Swal.fire({
+        icon: "success",
+        title: "Report Ready",
+        text: "Your report has been downloaded successfully.",
+        timer: 2000,
+        showConfirmButton: false,
+      });
+    } catch (error) {
+      console.error("Error generating report:", error);
+      Swal.fire({
+        icon: "error",
+        title: "Error",
+        text: "Failed to generate report. Please try again.",
+      });
     }
-
-    Swal.fire({
-      title: "Generating Report...",
-      text: "Please wait while we prepare your report.",
-      allowOutsideClick: false,
-      didOpen: () => Swal.showLoading(),
-    });
-
-    const response = await axios.post(
-      "http://localhost:5000/api/auth/dean-generate-monthly-department-logs",
-      {
-        courseCode: selectedCourse, // ✅ Send selected course
-        selectedYear: selectedYear || null,
-        selectedMonth: selectedMonth || null,
-      },
-      { responseType: "blob" }
-    );
-
-    // 🧾 Use course code and selected filters in the filename
-    const courseLabel = selectedCourse || "Course";
-    const yearLabel = selectedYear ? `_${selectedYear}` : "";
-    const monthLabel = selectedMonth
-      ? `_${new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
-          month: "long",
-        })}`
-      : "";
-
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${courseLabel}_AttendanceReport${yearLabel}${monthLabel}.docx`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-
-    Swal.fire({
-      icon: "success",
-      title: "Report Ready",
-      text: "Your report has been downloaded successfully.",
-      timer: 2000,
-      showConfirmButton: false,
-    });
-  } catch (error) {
-    console.error("Error generating report:", error);
-    Swal.fire({
-      icon: "error",
-      title: "Error",
-      text: "Failed to generate report. Please try again.",
-    });
-  }
-};
+  };
 
   return (
     <DeanMain>
@@ -331,10 +332,10 @@ const DeanFacultyReports: React.FC = React.memo(() => {
                 value={selectedCourse}
                 label="Course"
                 onChange={(e) => {
-      const selected = e.target.value;
-      setSelectedCourse(selected);
-      console.log("📘 Selected Course:", selected); // ✅ Log selected course
-    }}
+                  const selected = e.target.value;
+                  setSelectedCourse(selected);
+                  console.log("📘 Selected Course:", selected); // ✅ Log selected course
+                }}
                 renderValue={(selected) => selected || "All"}
               >
                 {courses.map((course) => (
