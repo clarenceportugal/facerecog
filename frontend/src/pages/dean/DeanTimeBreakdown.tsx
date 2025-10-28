@@ -45,9 +45,6 @@ interface TimeLog {
 }
 
 const DeanTimeBreakdown: React.FC = React.memo(() => {
-  const { id } = useParams<{ id: string }>();
-  const facultyId = id ?? "";
-
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
