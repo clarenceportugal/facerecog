@@ -14,19 +14,15 @@ import AdminMain from "./AdminMain";
 import DeleteIcon from "@mui/icons-material/Delete";
 
 type FaceDetection = {
-  box: [number, number, number, number]; // [x, y, w, h]
+  box: [number, number, number, number];
   name?: string | null;
   score?: number;
 };
 
-type CameraMessage = {
-  cameraId?: string;
-  frame?: string; // base64 JPEG
-  faces?: FaceDetection[];
-  frameNumber?: number;
-  status?: string;
-  cameraName?: string;
-  error?: string;
+type TrackedFace = {
+  detection: FaceDetection;
+  lastSeen: number; // Timestamp
+  framesSinceUpdate: number;
 };
 
 type DetectionLog = {
@@ -41,8 +37,8 @@ const LiveVideo: React.FC = () => {
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const lastDetectedNamesRef = useRef<Set<string>>(new Set());
+  const trackedFacesRef = useRef<Map<string, TrackedFace>>(new Map());
   
   const [faces, setFaces] = useState<FaceDetection[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<string>("camera1");
@@ -50,21 +46,19 @@ const LiveVideo: React.FC = () => {
   const [detectionLogs, setDetectionLogs] = useState<DetectionLog[]>([]);
   const [currentCameraName, setCurrentCameraName] = useState<string>("Camera 1");
 
-  // Auto-scroll to latest log
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [detectionLogs]);
+  // Persistence settings
+  const FACE_TIMEOUT_MS = 1000; // Keep face visible for 1 second after last detection
+  const MAX_FRAMES_WITHOUT_UPDATE = 20; // Maximum frames to keep face without update
 
   useEffect(() => {
-    // Connect to the server.js WebSocket
     const ws = new WebSocket("ws://localhost:3000");
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
       setConnectionStatus("Connected");
       
-      // Start streaming from selected camera
       ws.send(JSON.stringify({
         type: "start-rtsp",
         cameraId: selectedCamera
@@ -72,10 +66,110 @@ const LiveVideo: React.FC = () => {
     };
 
     ws.onmessage = (event) => {
+      // Handle binary frames (optimized path)
+      if (event.data instanceof ArrayBuffer) {
+        try {
+          const buffer = new Uint8Array(event.data);
+          
+          // Read metadata length (first 4 bytes)
+          const metadataLen = new DataView(buffer.buffer).getUint32(0, false);
+          
+          // Extract metadata JSON
+          const metadataBytes = buffer.slice(4, 4 + metadataLen);
+          const metadataStr = new TextDecoder().decode(metadataBytes);
+          const metadata = JSON.parse(metadataStr);
+          
+          // Extract JPEG data
+          const jpegData = buffer.slice(4 + metadataLen);
+          
+          // Only process if it's for the selected camera
+          if (metadata.cameraId === selectedCamera) {
+            // Display frame
+            const blob = new Blob([jpegData], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            
+            if (imgRef.current) {
+              imgRef.current.onload = () => URL.revokeObjectURL(url);
+              imgRef.current.src = url;
+            }
+            
+            // Update face tracking with persistence
+            const now = Date.now();
+            const currentDetections = metadata.faces || [];
+            
+            // Update tracked faces with new detections
+            if (currentDetections.length > 0) {
+              currentDetections.forEach((face: FaceDetection) => {
+                const faceKey = face.name || "Unknown";
+                
+                trackedFacesRef.current.set(faceKey, {
+                  detection: face,
+                  lastSeen: now,
+                  framesSinceUpdate: 0
+                });
+              });
+            }
+            
+            // Increment framesSinceUpdate and remove stale faces
+            const activeFaces: FaceDetection[] = [];
+            trackedFacesRef.current.forEach((tracked, key) => {
+              tracked.framesSinceUpdate++;
+              
+              // Keep face if it was seen recently OR hasn't been too many frames
+              const timeSinceLastSeen = now - tracked.lastSeen;
+              if (timeSinceLastSeen < FACE_TIMEOUT_MS && 
+                  tracked.framesSinceUpdate < MAX_FRAMES_WITHOUT_UPDATE) {
+                activeFaces.push(tracked.detection);
+              } else {
+                // Remove stale face
+                trackedFacesRef.current.delete(key);
+              }
+            });
+            
+            // Update displayed faces with persistent tracking
+            setFaces(activeFaces);
+            
+            // Log new faces (only when actually detected, not from persistence)
+            if (currentDetections.length > 0) {
+              const currentNames = new Set<string>(
+                currentDetections.map((f: FaceDetection) => f.name || "Unknown")
+              );
+              const previousNames = lastDetectedNamesRef.current;
+              
+              currentDetections.forEach((face: FaceDetection) => {
+                const name = face.name || "Unknown";
+                
+                if (!previousNames.has(name)) {
+                  const newLog: DetectionLog = {
+                    id: `${Date.now()}-${Math.random()}`,
+                    name: name,
+                    timestamp: new Date(),
+                    cameraName: currentCameraName,
+                    score: face.score,
+                  };
+                  
+                  setDetectionLogs(prev => [...prev, newLog]);
+                }
+              });
+              
+              lastDetectedNamesRef.current = currentNames;
+              
+              // Clear names that are no longer detected
+              if (currentDetections.length === 0) {
+                lastDetectedNamesRef.current.clear();
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing binary frame:", e);
+        }
+        return;
+      }
+      
+      // Handle JSON messages (status updates, errors)
       try {
-        const msg: CameraMessage = JSON.parse(event.data);
+        const msg = JSON.parse(event.data);
         
-        // Handle status updates
         if (msg.status === "connected") {
           console.log(`✅ ${msg.cameraName} connected`);
           setConnectionStatus(`Streaming: ${msg.cameraName}`);
@@ -83,52 +177,10 @@ const LiveVideo: React.FC = () => {
           return;
         }
         
-        // Handle errors
         if (msg.error) {
           console.error(`❌ Error from ${msg.cameraId}:`, msg.error);
           setConnectionStatus(`Error: ${msg.error}`);
           return;
-        }
-        
-        // Handle video frame + detections
-        if (msg.frame && msg.cameraId === selectedCamera) {
-          // Decode base64 frame
-          const img = imgRef.current;
-          if (img) {
-            img.src = `data:image/jpeg;base64,${msg.frame}`;
-          }
-          
-          // Update face detections and log new faces
-          if (msg.faces && msg.faces.length > 0) {
-            setFaces(msg.faces);
-            
-            // Log newly detected faces (only if name changed or new person)
-            const currentNames = new Set(msg.faces.map(f => f.name || "Unknown"));
-            const previousNames = lastDetectedNamesRef.current;
-            
-            msg.faces.forEach(face => {
-              const name = face.name || "Unknown";
-              
-              // Only log if it's a new detection or person re-appeared
-              if (!previousNames.has(name)) {
-                const newLog: DetectionLog = {
-                  id: `${Date.now()}-${Math.random()}`,
-                  name: name,
-                  timestamp: new Date(),
-                  cameraName: currentCameraName,
-                  score: face.score,
-                };
-                
-                setDetectionLogs(prev => [...prev, newLog]);
-              }
-            });
-            
-            lastDetectedNamesRef.current = currentNames;
-          } else {
-            // Clear faces if none detected
-            setFaces([]);
-            lastDetectedNamesRef.current.clear();
-          }
         }
       } catch (e) {
         console.error("Error parsing message:", e);
@@ -146,13 +198,12 @@ const LiveVideo: React.FC = () => {
     };
 
     return () => {
-      // Stop all streams before closing
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "stop" }));
       }
       ws.close();
     };
-  }, [selectedCamera]); // Reconnect when camera changes
+  }, [selectedCamera, currentCameraName]);
 
   // Draw detections (boxes + names)
   useEffect(() => {
@@ -163,7 +214,6 @@ const LiveVideo: React.FC = () => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Sync canvas size with image natural dimensions
     canvas.width = img.naturalWidth || 640;
     canvas.height = img.naturalHeight || 480;
 
@@ -175,16 +225,13 @@ const LiveVideo: React.FC = () => {
     faces.forEach((f) => {
       const [x, y, w, h] = f.box;
       
-      // Draw rectangle
       ctx.strokeRect(x, y, w, h);
       
-      // Draw name label with background
       const name = f.name || "Unknown";
       const textMetrics = ctx.measureText(name);
       const textHeight = 20;
       const padding = 5;
       
-      // Background for text
       ctx.fillStyle = "rgba(0, 255, 0, 0.8)";
       ctx.fillRect(
         x,
@@ -193,7 +240,6 @@ const LiveVideo: React.FC = () => {
         textHeight + padding
       );
       
-      // Text
       ctx.fillStyle = "#000";
       ctx.fillText(name, x + padding, y - padding);
     });
@@ -202,8 +248,9 @@ const LiveVideo: React.FC = () => {
   const handleCameraChange = (event: any) => {
     const newCamera = event.target.value;
     setSelectedCamera(newCamera);
-    setFaces([]); // Clear previous detections
-    lastDetectedNamesRef.current.clear(); // Clear tracking
+    setFaces([]);
+    lastDetectedNamesRef.current.clear();
+    trackedFacesRef.current.clear(); // Clear tracked faces on camera change
   };
 
   const handleClearLogs = () => {
@@ -283,7 +330,6 @@ const LiveVideo: React.FC = () => {
           }}
         />
         
-        {/* Face count indicator */}
         {faces.length > 0 && (
           <Box
             sx={{
@@ -303,7 +349,6 @@ const LiveVideo: React.FC = () => {
         )}
       </Box>
 
-      {/* Detection Logs Section */}
       <Paper 
         elevation={3} 
         sx={{ 
@@ -400,11 +445,9 @@ const LiveVideo: React.FC = () => {
               </Box>
             ))
           )}
-          <div ref={logsEndRef} />
         </Box>
       </Paper>
 
-      {/* Pulse animation for live indicator */}
       <style>{`
         @keyframes pulse {
           0%, 100% {
