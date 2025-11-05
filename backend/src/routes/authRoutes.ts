@@ -391,11 +391,13 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { CourseName } = req.body;
+      console.log(`[API] 📋 Fetching logs for program/course: "${CourseName}"`);
 
+      // Don't filter by course field - it contains courseCode not program name
+      // Instead, fetch all logs and let population handle the data
       const query: any = {};
-      if (CourseName) {
-        query.course = CourseName; // compare frontend CourseName with log.course
-      }
+      // Note: CourseName is the program (e.g., "bsit"), but log.course contains courseCode
+      // For now, fetch all logs. Can add filtering later if needed.
 
       const logs = await Log.find(query)
         .populate({
@@ -406,7 +408,35 @@ router.post(
           },
         })
         .populate("college")
+        .sort({ date: -1, timeIn: -1 }) // Sort by most recent first
         .lean();
+
+      console.log(`[API] ✅ Found ${logs.length} logs`);
+      
+      // Debug: Show detailed log structures
+      if (logs.length > 0) {
+        console.log(`[API] Sample log structure (first log):`, JSON.stringify({
+          _id: logs[0]._id,
+          course: logs[0].course,
+          date: logs[0].date,
+          timeIn: logs[0].timeIn,
+          timeout: logs[0].timeout,
+          status: logs[0].status,
+          remarks: logs[0].remarks,
+          hasSchedule: !!logs[0].schedule,
+          scheduleType: typeof logs[0].schedule,
+          scheduleId: (logs[0].schedule as any)?._id,
+          hasInstructor: !!(logs[0].schedule as any)?.instructor,
+          instructorId: (logs[0].schedule as any)?.instructor?._id,
+          instructorName: (logs[0].schedule as any)?.instructor ? 
+            `${(logs[0].schedule as any).instructor.first_name} ${(logs[0].schedule as any).instructor.last_name}` : 
+            'N/A',
+        }, null, 2));
+        
+        console.log(`[API] All log IDs:`, logs.map(l => l._id));
+      } else {
+        console.log(`[API] ⚠️ No logs found in database with query:`, query);
+      }
 
       res.status(200).json({
         success: true,

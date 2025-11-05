@@ -387,6 +387,293 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
   });
   
   
+  // LOG TIME IN FOR FACE RECOGNITION (called by Python recognizer)
+  router.post("/log-time-in", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { 
+        instructorName, 
+        scheduleId, 
+        cameraId, 
+        timestamp,
+        logType,    // "time in" or "late"
+        isLate      // boolean
+      } = req.body;
+      
+      console.log(`[API] Logging ${logType || 'TIME IN'} for: ${instructorName} (Late: ${isLate})`);
+      
+      const schedule = await Schedule.findById(scheduleId);
+      if (!schedule) {
+        console.log('[API] ❌ Schedule not found');
+        res.status(404).json({ message: 'Schedule not found' });
+        return;
+      }
+
+      // Check if already logged in today for this schedule
+      const today = new Date(timestamp);
+      const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD format
+      
+      const existingLog = await Log.findOne({
+        schedule: scheduleId,
+        date: todayStr,
+        timeIn: { $exists: true }
+      });
+
+      if (existingLog) {
+        console.log('[API] ℹ️ Already logged in today');
+        res.json({ message: 'Already logged in today', timeLog: existingLog });
+        return;
+      }
+
+      // Determine status based on isLate flag
+      const timeInDate = new Date(timestamp);
+      let status: 'present' | 'late' = 'present';
+      let remarks = '';
+      
+      if (isLate) {
+        status = 'late';
+        remarks = 'Late (arrived after grace period)';
+      } else {
+        remarks = 'On time';
+      }
+
+      // Get course from schedule
+      const populatedSchedule = await Schedule.findById(scheduleId).populate('section');
+      
+      // Create time log
+      const timeLog = new Log({
+        date: todayStr,
+        schedule: scheduleId,
+        timeIn: timeInDate.toTimeString().slice(0, 8), // HH:MM:SS
+        status: status,
+        remarks: remarks,
+        course: schedule.courseCode || 'N/A'
+      });
+
+      await timeLog.save();
+      
+      const emoji = isLate ? '⚠️' : '✅';
+      console.log(`[API] ${emoji} ${logType || 'TIME IN'} logged successfully - Status: ${status}`);
+      
+      res.json({ success: true, timeLog });
+    } catch (error: any) {
+      console.error('[API] Error logging time in:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // LOG TIME OUT FOR FACE RECOGNITION (called by Python recognizer)
+  router.post("/log-time-out", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { instructorName, scheduleId, timestamp, totalMinutes } = req.body;
+      console.log(`[API] Logging TIME OUT for: ${instructorName}`);
+      
+      const schedule = await Schedule.findById(scheduleId);
+      if (!schedule) {
+        console.log('[API] ❌ Schedule not found');
+        res.status(404).json({ message: 'Schedule not found' });
+        return;
+      }
+
+      // Find today's time log
+      const today = new Date(timestamp);
+      const todayStr = today.toISOString().slice(0, 10);
+
+      const timeLog = await Log.findOne({
+        schedule: scheduleId,
+        date: todayStr
+      });
+
+      if (!timeLog) {
+        console.log('[API] ❌ Time in log not found');
+        res.status(404).json({ message: 'Time in log not found' });
+        return;
+      }
+
+      // Update time out
+      const timeOutDate = new Date(timestamp);
+      const scheduleEndTime = new Date(`${todayStr}T${schedule.endTime}:00`);
+      const diffMinutes = (timeOutDate.getTime() - scheduleEndTime.getTime()) / (1000 * 60);
+      
+      let remarks = timeLog.remarks || '';
+      
+      if (diffMinutes < -15) {
+        timeLog.status = 'Left early' as any;
+        remarks += (remarks ? ' | ' : '') + `Left ${Math.floor(Math.abs(diffMinutes))} minutes early`;
+      }
+      
+      timeLog.timeout = timeOutDate.toTimeString().slice(0, 8);
+      timeLog.remarks = remarks;
+
+      await timeLog.save();
+      console.log(`[API] ✅ TIME OUT logged successfully - Total: ${totalMinutes} min`);
+      res.json({ success: true, timeLog });
+    } catch (error: any) {
+      console.error('[API] Error logging time out:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET CURRENT SCHEDULE FOR FACE RECOGNITION (called by Python recognizer)
+  router.post("/get-current-schedule", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { instructorName } = req.body;
+      console.log(`[API] === GET CURRENT SCHEDULE REQUEST ===`);
+      console.log(`[API] Received instructor name: "${instructorName}"`);
+
+      // Parse "Larbuiq, Kram" into first_name and last_name
+      const parts = instructorName.split(',').map((s: string) => s.trim());
+      let firstName, lastName;
+
+      if (parts.length === 2) {
+        lastName = parts[0];
+        firstName = parts[1];
+      } else {
+        // If not in "Last, First" format, try space-separated
+        const spaceParts = instructorName.split(' ');
+        firstName = spaceParts[0] || '';
+        lastName = spaceParts.slice(1).join(' ') || '';
+      }
+
+      console.log(`[API] Searching User collection for first_name: "${firstName}", last_name: "${lastName}"`);
+      
+      // Find the instructor in the User collection
+      const instructor = await User.findOne({
+        first_name: { $regex: new RegExp(`^${firstName}$`, 'i') },
+        last_name: { $regex: new RegExp(`^${lastName}$`, 'i') }
+      });
+
+      if (!instructor) {
+        console.log(`[API] ❌ Instructor not found: ${instructorName}`);
+        console.log(`[API] Searched for: first_name="${firstName}", last_name="${lastName}"`);
+        
+        // Try to find any users to help with debugging
+        const allUsers = await User.find({ role: 'instructor' }).limit(5);
+        console.log(`[API] Sample instructors in database:`, allUsers.map(u => `${u.first_name} ${u.last_name}`));
+        
+        res.json({ 
+          schedule: null,
+          debug: {
+            searchedFor: { firstName, lastName, originalName: instructorName },
+            instructorNotFound: true
+          }
+        });
+        return;
+      }
+
+      console.log(`[API] ✅ Found instructor: ${instructor.first_name} ${instructor.last_name} (${instructor._id})`);
+
+      // Get current time and day
+      const now = new Date();
+      const currentHours = now.getHours();
+      const currentMinutes = currentHours * 60 + now.getMinutes();
+      const currentTime = `${String(currentHours).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][now.getDay()];
+      const currentDateStr = now.toISOString().slice(0, 10);
+
+      console.log(`[API] Current time: ${currentTime} (${currentMinutes} minutes), Current day: ${dayOfWeek}`);
+
+      // Build query object for the days field
+      const daysQuery: any = {};
+      daysQuery[`days.${dayOfWeek}`] = true;
+
+      console.log(`[API] Querying schedules with instructor: ${instructor._id}, day: ${dayOfWeek}`);
+
+      // Find schedule for this instructor, current day, within semester dates
+      let schedule = await Schedule.findOne({
+        instructor: instructor._id,
+        ...daysQuery,
+        semesterStartDate: { $lte: currentDateStr },
+        semesterEndDate: { $gte: currentDateStr }
+      }).populate('instructor section');
+
+      console.log(`[API] Initial query returned: ${schedule ? 'Found' : 'Not found'}`);
+
+      // Fallback: manually filter if no results
+      if (!schedule) {
+        console.log(`[API] Trying fallback query (manual day filtering)...`);
+        const allSchedules = await Schedule.find({
+          instructor: instructor._id,
+          semesterStartDate: { $lte: currentDateStr },
+          semesterEndDate: { $gte: currentDateStr }
+        }).populate('instructor section');
+
+        console.log(`[API] Found ${allSchedules.length} schedules for this instructor (any day)`);
+        
+        schedule = allSchedules.find((s: any) => {
+          const days = s.days || {};
+          const isActiveToday = days[dayOfWeek] === true;
+          console.log(`[API] Schedule ${s._id}: days=${JSON.stringify(days)}, ${dayOfWeek}=${isActiveToday}`);
+          return isActiveToday;
+        }) || null;
+
+        console.log(`[API] Manual filter result: ${schedule ? 'Found' : 'Still not found'}`);
+      }
+
+      if (!schedule) {
+        console.log(`[API] ❌ No schedule found for ${instructorName} on ${dayOfWeek} at ${currentTime}`);
+        res.json({ 
+          schedule: null,
+          debug: {
+            instructor: { firstName, lastName, id: instructor._id },
+            currentTime,
+            currentDay: dayOfWeek,
+            noScheduleFound: true
+          }
+        });
+        return;
+      }
+
+      // Parse schedule start and end times
+      const [startH, startM] = schedule.startTime.split(':').map(Number);
+      const [endH, endM] = schedule.endTime.split(':').map(Number);
+      const startMinutes = startH * 60 + startM;
+      const endMinutes = endH * 60 + endM;
+
+      console.log(`[API] Schedule time range: ${schedule.startTime} (${startMinutes}min) - ${schedule.endTime} (${endMinutes}min)`);
+      console.log(`[API] Current time: ${currentTime} (${currentMinutes}min)`);
+      console.log(`[API] In range: ${currentMinutes >= startMinutes && currentMinutes <= endMinutes}`);
+
+      // Check if current time is within schedule time
+      if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) {
+        console.log(`[API] ✅ Active schedule found for ${instructorName}`);
+        
+        // Ensure days object is properly formatted
+        const scheduleObj: any = schedule.toObject();
+        if (!scheduleObj.days || Object.keys(scheduleObj.days).length === 0) {
+          scheduleObj.days = {
+            mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false
+          };
+        }
+
+        res.json({ 
+          schedule: scheduleObj,
+          debug: {
+            instructor: { firstName, lastName, id: instructor._id },
+            currentTime,
+            currentDay: dayOfWeek,
+            scheduleFound: true,
+            timeInRange: true
+          }
+        });
+      } else {
+        console.log(`[API] ⏰ Schedule found but not active at current time`);
+        res.json({ 
+          schedule: null,
+          debug: {
+            instructor: { firstName, lastName, id: instructor._id },
+            currentTime,
+            currentDay: dayOfWeek,
+            scheduleFound: true,
+            timeInRange: false,
+            scheduleTime: `${schedule.startTime}-${schedule.endTime}`
+          }
+        });
+      }
+    } catch (error) {
+      console.error('[API] ❌ Error in get-current-schedule:', error);
+      res.status(500).json({ schedule: null, error: String(error) });
+    }
+  });
 
 
   

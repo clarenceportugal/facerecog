@@ -357,7 +357,7 @@ Examples:
                 faces_dir=args.faces_dir,
                 remove_bg=not args.no_remove_bg,
                 model_name=args.model,
-                keep_original=args.keep_original
+                keep_original=args.keep_orig
             )
             
             if not result['success']:
