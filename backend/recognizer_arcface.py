@@ -468,13 +468,50 @@ print("[INFO] Starting ArcFace initialization...", file=sys.stderr, flush=True)
 
 # Initialize ArcFace model
 try:
-    print("[INFO] Using CPU for face detection", file=sys.stderr, flush=True)
-    # Using buffalo_s (small) model for faster detection instead of buffalo_l (large)
-    app = FaceAnalysis(name="buffalo_s", providers=['CPUExecutionProvider'])
-    # Further reduced det_size to 320 for much faster detection
-    # 320x320 is a good balance between speed and accuracy for real-time detection
-    app.prepare(ctx_id=-1, det_size=(320, 320))
-    print("[INFO] ArcFace model loaded successfully (optimized for maximum speed)", file=sys.stderr, flush=True)
+    # Try GPU first, fallback to CPU if GPU not available
+    import onnxruntime as ort
+    
+    # Check if CUDA is available
+    available_providers = ort.get_available_providers()
+    use_gpu = 'CUDAExecutionProvider' in available_providers
+    
+    if use_gpu:
+        print("[INFO] ✅ GPU provider detected! Attempting to use CUDA for face detection", file=sys.stderr, flush=True)
+        print(f"[INFO] Available providers: {available_providers}", file=sys.stderr, flush=True)
+        # Try GPU with CUDAExecutionProvider
+        try:
+            app = FaceAnalysis(name="buffalo_s", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+            # ctx_id=0 means GPU (first GPU), -1 means CPU
+            app.prepare(ctx_id=0, det_size=(640, 640))  # Use larger detection size with GPU
+            print("[INFO] ✅ ArcFace model loaded successfully on GPU (CUDA)", file=sys.stderr, flush=True)
+            print("[INFO] Performance: Expect ~2-3x faster than CPU", file=sys.stderr, flush=True)
+        except Exception as gpu_error:
+            error_msg = str(gpu_error)
+            print("[WARNING] ⚠️  GPU initialization failed", file=sys.stderr, flush=True)
+            
+            # Check for specific CUDA DLL errors
+            if "cublasLt64" in error_msg or "cublas" in error_msg or "dll" in error_msg.lower():
+                print("[WARNING] CUDA runtime libraries are missing!", file=sys.stderr, flush=True)
+                print("[WARNING] Your onnxruntime-gpu requires CUDA runtime libraries to be installed.", file=sys.stderr, flush=True)
+                print("[WARNING] Solution: Install CUDA Toolkit from NVIDIA website", file=sys.stderr, flush=True)
+                print("[WARNING]   - Download: https://developer.nvidia.com/cuda-downloads", file=sys.stderr, flush=True)
+                print("[WARNING]   - Or use: pip install nvidia-cublas-cu12 (for CUDA 12.x)", file=sys.stderr, flush=True)
+                print("[WARNING]   - Or install onnxruntime-gpu with matching CUDA version", file=sys.stderr, flush=True)
+            else:
+                print(f"[WARNING] Error details: {error_msg}", file=sys.stderr, flush=True)
+            
+            print("[INFO] Falling back to CPU mode (still functional, just slower)...", file=sys.stderr, flush=True)
+            use_gpu = False
+    
+    if not use_gpu:
+        print("[INFO] Using CPU for face detection", file=sys.stderr, flush=True)
+        # Using buffalo_s (small) model for faster detection instead of buffalo_l (large)
+        app = FaceAnalysis(name="buffalo_s", providers=['CPUExecutionProvider'])
+        # Further reduced det_size to 320 for much faster detection
+        # 320x320 is a good balance between speed and accuracy for real-time detection
+        app.prepare(ctx_id=-1, det_size=(320, 320))
+        print("[INFO] ArcFace model loaded successfully on CPU (optimized for maximum speed)", file=sys.stderr, flush=True)
+        
 except Exception as e:
     print(f"[ERROR] Failed to load ArcFace model: {e}", file=sys.stderr, flush=True)
     import traceback

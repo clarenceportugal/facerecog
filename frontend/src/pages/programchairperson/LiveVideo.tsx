@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   Typography,
   Box,
@@ -69,11 +70,11 @@ const LiveVideo: React.FC = () => {
   const [detectionLogs, setDetectionLogs] = useState<DetectionLog[]>([]);
   const [currentCameraName, setCurrentCameraName] = useState<string>("Camera 1");
 
-  // Optimized for instant response
-  const FACE_TIMEOUT_MS = 100; // Very short timeout - remove boxes almost immediately
-  const MAX_FRAMES_WITHOUT_UPDATE = 1; // Remove after just 1 frame without detection
+  // Optimized for instant response - no delays, immediate updates
+  const FACE_TIMEOUT_MS = 0; // No timeout - instant removal when not detected
   const ABSENCE_TIMEOUT_SECONDS = 300; // 5 minutes
-  const SMOOTHING_FACTOR = 0.7; // High smoothing for smooth tracking when present
+  const SMOOTHING_FACTOR = 0.9; // Very high smoothing for existing faces (reduces jitter)
+  const NEW_FACE_SMOOTHING_FACTOR = 1.0; // No smoothing for new faces - instant display
   const DETECTION_LOG_INTERVAL_MS = 120000; // 2 minutes in milliseconds
 
   const smoothBox = (
@@ -171,20 +172,28 @@ const LiveVideo: React.FC = () => {
               });
             }
             
-            // Update face tracking with smoothing
+            // Optimized face tracking - instant display and removal
             const now = Date.now();
             const currentDetections = metadata.faces || [];
             const currentDetectionNames = new Set(
               currentDetections.map((f: FaceDetection) => f.name || "Unknown")
             );
 
-            // If no faces detected from server, immediately clear all
+            // If no faces detected from server, immediately clear all (no delay)
             if (currentDetections.length === 0) {
-              trackedFacesRef.current.clear();
-              smoothedBoxesRef.current.clear();
-              setFaces([]);
+              if (trackedFacesRef.current.size > 0) {
+                trackedFacesRef.current.clear();
+                smoothedBoxesRef.current.clear();
+                // Use flushSync for immediate DOM update - boxes disappear instantly
+                flushSync(() => {
+                  setFaces([]);
+                });
+              }
             } else {
-              // First, immediately remove any faces NOT in current detections
+              // Check for faces to remove BEFORE processing to detect changes
+              const previousFaceKeys = new Set(trackedFacesRef.current.keys());
+              
+              // Immediately remove any faces NOT in current detections (instant removal)
               const facesToRemove: string[] = [];
               trackedFacesRef.current.forEach((tracked, key) => {
                 if (!currentDetectionNames.has(key)) {
@@ -192,23 +201,31 @@ const LiveVideo: React.FC = () => {
                 }
               });
               
+              // Check if there are new faces
+              const hasNewFaces = [...currentDetectionNames].some(key => !previousFaceKeys.has(key));
+              
+              // Remove faces immediately
               facesToRemove.forEach(key => {
                 trackedFacesRef.current.delete(key);
                 smoothedBoxesRef.current.delete(key);
               });
 
-              // Update tracking for currently detected faces
+              // Update tracking for currently detected faces with instant display for new faces
               const activeFaces: FaceDetection[] = [];
               
               currentDetections.forEach((face: FaceDetection) => {
                 const faceKey = face.name || "Unknown";
                 const existingSmoothed = smoothedBoxesRef.current.get(faceKey);
+                const isNewFace = !existingSmoothed;
+                
+                // Use instant display (no smoothing) for new faces, smooth for existing faces
+                const smoothingFactor = isNewFace ? NEW_FACE_SMOOTHING_FACTOR : SMOOTHING_FACTOR;
                 
                 // Smooth the box coordinates for smooth visual tracking
                 const smoothedBox = smoothBox(
                   existingSmoothed?.box,
                   face.box,
-                  SMOOTHING_FACTOR
+                  smoothingFactor
                 );
                 
                 // Update smoothed boxes
@@ -232,7 +249,15 @@ const LiveVideo: React.FC = () => {
                 activeFaces.push(smoothedFace);
               });
 
-              setFaces(activeFaces);
+              // Use flushSync only for critical changes (new faces or removed faces), otherwise normal update
+              if (hasNewFaces || facesToRemove.length > 0) {
+                flushSync(() => {
+                  setFaces(activeFaces);
+                });
+              } else {
+                // Normal update for existing faces (just position updates)
+                setFaces(activeFaces);
+              }
             }
             
             // Log new face detections (not events) - with 2 minute throttling
@@ -346,48 +371,77 @@ const LiveVideo: React.FC = () => {
     };
   }, [selectedCamera, currentCameraName]);
 
+  // Optimized canvas rendering with requestAnimationFrame for instant updates
   useEffect(() => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
-    if (!canvas || !img || !img.complete) return;
+    if (!canvas || !img) return;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    // Wait for image to load, but use requestAnimationFrame for immediate updates
+    const drawFrame = () => {
+      if (!img.complete) {
+        requestAnimationFrame(drawFrame);
+        return;
+      }
 
-    canvas.width = img.naturalWidth || 640;
-    canvas.height = img.naturalHeight || 480;
+      const ctx = canvas.getContext("2d", { alpha: false }); // Disable alpha for better performance
+      if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.lineWidth = 3;
-    ctx.font = "bold 18px Arial";
+      // Update canvas size only if changed (reduces unnecessary redraws)
+      const newWidth = img.naturalWidth || 640;
+      const newHeight = img.naturalHeight || 480;
+      if (canvas.width !== newWidth || canvas.height !== newHeight) {
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+      }
 
-    faces.forEach((f) => {
-      const [x, y, w, h] = f.box;
+      // Clear canvas immediately
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // Determine box color based on schedule status
-      const hasSchedule = f.has_schedule || (f.session && f.session.schedule !== null);
-      const boxColor = hasSchedule ? "#00ff00" : "#ffff00";  // Green if has schedule, Yellow if not
-      const bgColor = hasSchedule ? "rgba(0, 255, 0, 0.8)" : "rgba(255, 255, 0, 0.8)";
-      
-      ctx.strokeStyle = boxColor;
-      ctx.strokeRect(x, y, w, h);
-      
-      const name = f.name || "Unknown";
-      const textMetrics = ctx.measureText(name);
-      const textHeight = 20;
-      const padding = 5;
-      
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(
-        x,
-        y - textHeight - padding,
-        textMetrics.width + padding * 2,
-        textHeight + padding
-      );
-      
-      ctx.fillStyle = "#000";
-      ctx.fillText(name, x + padding, y - padding);
-    });
+      // Only draw if faces exist
+      if (faces.length === 0) return;
+
+      // Optimize rendering settings
+      ctx.lineWidth = 3;
+      ctx.font = "bold 18px Arial";
+      ctx.textBaseline = "top";
+
+      // Batch similar operations
+      faces.forEach((f) => {
+        const [x, y, w, h] = f.box;
+        
+        // Determine box color based on schedule status
+        const hasSchedule = f.has_schedule || (f.session && f.session.schedule !== null);
+        const boxColor = hasSchedule ? "#00ff00" : "#ffff00";  // Green if has schedule, Yellow if not
+        const bgColor = hasSchedule ? "rgba(0, 255, 0, 0.8)" : "rgba(255, 255, 0, 0.8)";
+        
+        // Draw box border
+        ctx.strokeStyle = boxColor;
+        ctx.strokeRect(x, y, w, h);
+        
+        // Draw name label
+        const name = f.name || "Unknown";
+        const textMetrics = ctx.measureText(name);
+        const textHeight = 20;
+        const padding = 5;
+        
+        // Draw background for text
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(
+          x,
+          y - textHeight - padding,
+          textMetrics.width + padding * 2,
+          textHeight + padding
+        );
+        
+        // Draw text
+        ctx.fillStyle = "#000";
+        ctx.fillText(name, x + padding, y - padding);
+      });
+    };
+
+    // Use requestAnimationFrame for smooth, immediate rendering
+    requestAnimationFrame(drawFrame);
   }, [faces, imgRef.current?.src]);
 
   const handleCameraChange = (event: any) => {
