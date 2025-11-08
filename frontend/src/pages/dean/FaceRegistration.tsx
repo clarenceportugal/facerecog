@@ -35,6 +35,9 @@ import DeanMain from "./DeanMain";
 import FaceRegistrationModal from "../../components/FaceRegistrationModal";
 import axios from "axios";
 
+// Get API base URL from environment variable (Vite uses VITE_ prefix)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
 interface College {
   _id: string;
   code: string;
@@ -90,7 +93,7 @@ const FaceRegistration: React.FC = () => {
         if (currentUserId) {
           try {
             const userResponse = await axios.get(
-              `http://localhost:5000/api/auth/user/${currentUserId}`
+              `${API_BASE_URL}/api/auth/user/${currentUserId}`
             );
             console.log("Current user data:", userResponse.data);
             
@@ -107,24 +110,35 @@ const FaceRegistration: React.FC = () => {
       
       if (!collegeCode) {
         setError("College information not found. Please log in again.");
-      return;
-    }
+        setLoading(false);
+        return;
+      }
 
       console.log("Fetching users for college:", collegeCode);
       
       const response = await axios.get(
-        "http://localhost:5000/api/auth/college-users",
+        `${API_BASE_URL}/api/auth/college-users`,
         {
-          params: { collegeCode }
+          params: { collegeCode },
+          headers: {
+            'Content-Type': 'application/json'
+          }
         }
       );
 
       console.log("API Response:", response.data);
-      console.log("Number of users found:", response.data.length);
+      console.log("Number of users found:", response.data?.length || 0);
       console.log("Response status:", response.status);
 
-      setUsers(response.data);
-      setFilteredUsers(response.data);
+      if (Array.isArray(response.data)) {
+        setUsers(response.data);
+        setFilteredUsers(response.data);
+      } else {
+        console.error("Invalid response format - expected array, got:", typeof response.data);
+        setError("Invalid data format received from server");
+        setUsers([]);
+        setFilteredUsers([]);
+      }
     } catch (error) {
       console.error("Error fetching users:", error);
       if (axios.isAxiosError(error)) {

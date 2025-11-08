@@ -22,8 +22,11 @@ sys.stderr.reconfigure(line_buffering=True)
 # ----------------------------
 # Config
 # ----------------------------
-DATASET_DIR = Path(r"C:\Users\mark\Documents\GitHub\eduvision\streaming-server\faces")
-CONF_THRESHOLD = 0.55  # Slightly lower threshold (0.55 vs 0.6) for better detection
+# Use relative path: go up one level from backend/ to project root, then into streaming-server/faces
+SCRIPT_DIR = Path(__file__).parent.resolve()
+DATASET_DIR = SCRIPT_DIR.parent / "streaming-server" / "faces"
+# Optimized for i5 12th gen + RTX 4050 + 16GB RAM
+CONF_THRESHOLD = 0.55  # Slightly lower threshold for faster recognition while maintaining accuracy
 ABSENCE_TIMEOUT_SECONDS = 300  # 5 minutes = 300 seconds
 LATE_THRESHOLD_MINUTES = 15  # 15 minutes late threshold
 BACKEND_API = "http://localhost:5000/api/auth"  # TypeScript server with API endpoints
@@ -401,18 +404,37 @@ def read_frame_from_stdin():
             print(f"[ERROR] Frame too large: {frame_len} bytes", file=sys.stderr, flush=True)
             return None
         
+        if frame_len == 0:
+            print(f"[WARNING] Received zero-length frame", file=sys.stderr, flush=True)
+            return None
+        
         jpg_bytes = b''
+        bytes_read = 0
         while len(jpg_bytes) < frame_len:
             chunk = sys.stdin.buffer.read(min(65536, frame_len - len(jpg_bytes)))
             if not chunk:
+                print(f"[ERROR] Incomplete frame: read {len(jpg_bytes)}/{frame_len} bytes", file=sys.stderr, flush=True)
                 return None
             jpg_bytes += chunk
+            bytes_read += len(chunk)
+        
+        # Debug: Check JPEG validity
+        if len(jpg_bytes) < 2 or jpg_bytes[0] != 0xFF or jpg_bytes[1] != 0xD8:
+            print(f"[ERROR] Invalid JPEG header: {jpg_bytes[:4].hex()}", file=sys.stderr, flush=True)
+            return None
         
         frame = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            print(f"[ERROR] Failed to decode JPEG (size: {len(jpg_bytes)} bytes)", file=sys.stderr, flush=True)
+            return None
+        
         return frame
         
     except Exception as e:
         print(f"[ERROR] Failed to read frame: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return None
 
 def check_absent_people(currently_detected_names):
@@ -468,49 +490,38 @@ print("[INFO] Starting ArcFace initialization...", file=sys.stderr, flush=True)
 
 # Initialize ArcFace model
 try:
-    # Try GPU first, fallback to CPU if GPU not available
-    import onnxruntime as ort
+    # Use CPU mode only (simpler and more reliable)
+    print("[INFO] Using CPU for face detection", file=sys.stderr, flush=True)
+    init_start = time.time()
     
-    # Check if CUDA is available
-    available_providers = ort.get_available_providers()
-    use_gpu = 'CUDAExecutionProvider' in available_providers
+    # Configure CPU provider with optimizations
+    cpu_options = {
+        'intra_op_num_threads': 4,  # Use 4 threads for parallel operations
+        'inter_op_num_threads': 2,  # Use 2 threads for operations between layers
+    }
     
-    if use_gpu:
-        print("[INFO] ✅ GPU provider detected! Attempting to use CUDA for face detection", file=sys.stderr, flush=True)
-        print(f"[INFO] Available providers: {available_providers}", file=sys.stderr, flush=True)
-        # Try GPU with CUDAExecutionProvider
-        try:
-            app = FaceAnalysis(name="buffalo_s", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-            # ctx_id=0 means GPU (first GPU), -1 means CPU
-            app.prepare(ctx_id=0, det_size=(640, 640))  # Use larger detection size with GPU
-            print("[INFO] ✅ ArcFace model loaded successfully on GPU (CUDA)", file=sys.stderr, flush=True)
-            print("[INFO] Performance: Expect ~2-3x faster than CPU", file=sys.stderr, flush=True)
-        except Exception as gpu_error:
-            error_msg = str(gpu_error)
-            print("[WARNING] ⚠️  GPU initialization failed", file=sys.stderr, flush=True)
-            
-            # Check for specific CUDA DLL errors
-            if "cublasLt64" in error_msg or "cublas" in error_msg or "dll" in error_msg.lower():
-                print("[WARNING] CUDA runtime libraries are missing!", file=sys.stderr, flush=True)
-                print("[WARNING] Your onnxruntime-gpu requires CUDA runtime libraries to be installed.", file=sys.stderr, flush=True)
-                print("[WARNING] Solution: Install CUDA Toolkit from NVIDIA website", file=sys.stderr, flush=True)
-                print("[WARNING]   - Download: https://developer.nvidia.com/cuda-downloads", file=sys.stderr, flush=True)
-                print("[WARNING]   - Or use: pip install nvidia-cublas-cu12 (for CUDA 12.x)", file=sys.stderr, flush=True)
-                print("[WARNING]   - Or install onnxruntime-gpu with matching CUDA version", file=sys.stderr, flush=True)
-            else:
-                print(f"[WARNING] Error details: {error_msg}", file=sys.stderr, flush=True)
-            
-            print("[INFO] Falling back to CPU mode (still functional, just slower)...", file=sys.stderr, flush=True)
-            use_gpu = False
+    # Use buffalo_s (small/fast model) instead of buffalo_l (large/slow)
+    # buffalo_s is optimized for speed over accuracy
+    try:
+        app = FaceAnalysis(
+            name="buffalo_s",  # Changed from buffalo_l for much faster detection
+            providers=[('CPUExecutionProvider', cpu_options)]
+        )
+        model_name = "buffalo_s (fast)"
+    except:
+        print("[WARN] buffalo_s not found, falling back to buffalo_l", file=sys.stderr, flush=True)
+        app = FaceAnalysis(
+            name="buffalo_l", 
+            providers=[('CPUExecutionProvider', cpu_options)]
+        )
+        model_name = "buffalo_l (standard)"
     
-    if not use_gpu:
-        print("[INFO] Using CPU for face detection", file=sys.stderr, flush=True)
-        # Using buffalo_s (small) model for faster detection instead of buffalo_l (large)
-        app = FaceAnalysis(name="buffalo_s", providers=['CPUExecutionProvider'])
-        # Further reduced det_size to 320 for much faster detection
-        # 320x320 is a good balance between speed and accuracy for real-time detection
-        app.prepare(ctx_id=-1, det_size=(320, 320))
-        print("[INFO] ArcFace model loaded successfully on CPU (optimized for maximum speed)", file=sys.stderr, flush=True)
+    # Ultra-low resolution for maximum speed: 256x256
+    app.prepare(ctx_id=-1, det_size=(256, 256))  # Reduced from 320x320 for even faster detection
+    init_time = time.time() - init_start
+    print(f"[INFO] ✅ ArcFace model loaded successfully on CPU (took {init_time:.2f}s)", file=sys.stderr, flush=True)
+    print(f"[INFO] Model: {model_name}, det_size=(256, 256) - Optimized for slow CPUs", file=sys.stderr, flush=True)
+    print(f"[INFO] CPU threads: intra_op={cpu_options['intra_op_num_threads']}, inter_op={cpu_options['inter_op_num_threads']}", file=sys.stderr, flush=True)
         
 except Exception as e:
     print(f"[ERROR] Failed to load ArcFace model: {e}", file=sys.stderr, flush=True)
@@ -519,8 +530,12 @@ except Exception as e:
     sys.exit(1)
 
 # Load initial embeddings
+print("[INFO] Loading face embeddings...", file=sys.stderr, flush=True)
+embedding_start = time.time()
 if not load_embeddings(app):
     sys.exit(1)
+embedding_time = time.time() - embedding_start
+print(f"[INFO] ✅ Face embeddings loaded (took {embedding_time:.2f}s)", file=sys.stderr, flush=True)
 
 # Start file system watcher
 print("[INFO] Starting file system watcher...", file=sys.stderr, flush=True)
@@ -543,30 +558,75 @@ print(f"[INFO] Late threshold: {LATE_THRESHOLD_MINUTES} minutes", file=sys.stder
 frame_count = 0
 last_absence_check = datetime.now()
 
+# Profiling variables
+total_frame_read_time = 0
+total_detection_time = 0
+total_recognition_time = 0
+total_processing_time = 0
+profile_interval = 100  # Report every 100 frames
+
 try:
     while True:
         try:
+            # ⏱️ PROFILING: Start frame processing timer
+            frame_start_time = time.time()
+            
             # Check if embeddings need to be reloaded
             reload_embeddings_if_needed(app)
             
+            # ⏱️ PROFILING: Frame read timer
+            read_start = time.time()
             frame = read_frame_from_stdin()
+            read_time = time.time() - read_start
+            total_frame_read_time += read_time
+            
             if frame is None:
                 print("[INFO] No more frames, exiting", file=sys.stderr, flush=True)
                 break
             
             frame_count += 1
-            # Reduced logging frequency for better performance
-            if frame_count % 200 == 0:
-                print(f"[INFO] Processed {frame_count} frames", file=sys.stderr, flush=True)
+            
+            # Debug: Check frame validity
+            if frame is None or frame.size == 0:
+                if frame_count % 30 == 0:
+                    print(f"[ERROR] Invalid frame received (frame_count={frame_count})", file=sys.stderr, flush=True)
+                print(json.dumps({"faces": [], "events": []}), flush=True)
+                continue
             
             detections = []
             events = []
             
             # Thread-safe access to embeddings
             with embeddings_lock:
-                faces = app.get(frame)
+                try:
+                    # ⏱️ PROFILING: Face detection timer
+                    detection_start = time.time()
+                    faces = app.get(frame)
+                    detection_time = time.time() - detection_start
+                    total_detection_time += detection_time
+                    
+                    # Log detection time for every frame with faces or periodically
+                    if len(faces) > 0:
+                        print(f"[⏱️ PROFILE] Frame {frame_count}: Read={read_time*1000:.1f}ms, Detection={detection_time*1000:.1f}ms, Faces={len(faces)}", file=sys.stderr, flush=True)
+                except Exception as e:
+                    print(f"[ERROR] Face detection failed: {e}", file=sys.stderr, flush=True)
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    faces = []
+                    print(json.dumps({"faces": [], "events": []}), flush=True)
+                    continue
+                
+                # Debug: Log if faces are detected (more frequent for debugging)
+                if len(faces) > 0:
+                    if frame_count % 10 == 0:  # Log every 10 frames for faster feedback
+                        print(f"[DEBUG] Detected {len(faces)} face(s) in frame {frame_count}, {len(known_names)} known faces in database", file=sys.stderr, flush=True)
+                elif frame_count % 100 == 0:  # Log every 100 frames if no faces
+                    print(f"[DEBUG] No faces detected in frame {frame_count} (database has {len(known_names)} known faces)", file=sys.stderr, flush=True)
                 
                 currently_detected_names = set()
+                
+                # ⏱️ PROFILING: Recognition timer (for all faces in frame)
+                recognition_start = time.time()
                 
                 for f in faces:
                     x1, y1, x2, y2 = map(int, f.bbox)
@@ -574,6 +634,14 @@ try:
                     h = y2 - y1
                     
                     emb = f.embedding / norm(f.embedding)
+                    
+                    # Check if we have any known faces to compare against
+                    if len(known_embeddings) == 0:
+                        # No faces in database - skip detection
+                        if frame_count % 300 == 0:
+                            print(f"[WARNING] Face detected but no faces registered in database! Add face images to: {DATASET_DIR}", file=sys.stderr, flush=True)
+                        continue
+                    
                     sims = np.dot(known_embeddings, emb)
                     best_idx = np.argmax(sims)
                     best_score = sims[best_idx]
@@ -667,6 +735,18 @@ try:
                                 "session": session_dict,
                                 "has_schedule": session_dict.get("schedule") is not None
                             })
+                    else:
+                        # Face detected but confidence too low - skip (don't show as Unknown)
+                        if frame_count % 300 == 0:
+                            print(f"[DEBUG] Face detected but not recognized (score {best_score:.3f} < threshold {CONF_THRESHOLD})", file=sys.stderr, flush=True)
+                        # Don't add to detections - only show recognized faces
+            
+                # ⏱️ PROFILING: End recognition timer
+                recognition_time = time.time() - recognition_start
+                total_recognition_time += recognition_time
+                
+                if len(faces) > 0:
+                    print(f"[⏱️ PROFILE] Frame {frame_count}: Recognition={recognition_time*1000:.1f}ms for {len(faces)} face(s)", file=sys.stderr, flush=True)
             
             # Check for absent people
             now = datetime.now()
@@ -675,9 +755,30 @@ try:
                 events.extend(absence_events)
                 last_absence_check = now
             
+            # Get frame dimensions for scaling (needed for accurate box placement)
+            frame_height, frame_width = frame.shape[:2]
+            
+            # ⏱️ PROFILING: End total frame processing timer
+            frame_processing_time = time.time() - frame_start_time
+            total_processing_time += frame_processing_time
+            
+            # Log detailed timing for frames with faces
+            if len(detections) > 0:
+                print(f"[⏱️ PROFILE] Frame {frame_count} TOTAL: {frame_processing_time*1000:.1f}ms (Read:{read_time*1000:.1f}ms + Detect:{detection_time*1000:.1f}ms + Recog:{recognition_time*1000:.1f}ms + Other:{(frame_processing_time-read_time-detection_time-recognition_time)*1000:.1f}ms)", file=sys.stderr, flush=True)
+            
+            # Report average timing every N frames
+            if frame_count % profile_interval == 0:
+                avg_read = (total_frame_read_time / frame_count) * 1000
+                avg_detect = (total_detection_time / frame_count) * 1000
+                avg_recog = (total_recognition_time / frame_count) * 1000
+                avg_total = (total_processing_time / frame_count) * 1000
+                print(f"[📊 STATS] After {frame_count} frames - AVG: Read={avg_read:.1f}ms, Detect={avg_detect:.1f}ms, Recog={avg_recog:.1f}ms, Total={avg_total:.1f}ms", file=sys.stderr, flush=True)
+            
             result = {
                 "faces": detections,
-                "events": events if events else []
+                "events": events if events else [],
+                "frame_width": int(frame_width),
+                "frame_height": int(frame_height)
             }
             print(json.dumps(result), flush=True)
             

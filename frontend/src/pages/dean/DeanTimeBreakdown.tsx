@@ -104,18 +104,27 @@ const [selectedCourse, setSelectedCourse] = useState<string>("");
 
       if (!isMounted) return;
 
-      const formattedLogs: TimeLog[] = response.data.data.map((log: any) => ({
-        _id: log._id,
-        date: log.date,
-        instructorName: `${log.schedule.instructor.first_name} ${log.schedule.instructor.middle_name} ${log.schedule.instructor.last_name}`,
-        courseCode: log.schedule.courseCode,
-        courseTitle: log.schedule.courseTitle,
-        timeIn: log.timeIn,
-        timeOut: log.timeout,
-        room: log.schedule.room,
-        status: log.status,
-        remarks: log.remarks,
-      }));
+      const formattedLogs: TimeLog[] = response.data.data
+        .filter((log: any) => log.schedule !== null && log.schedule !== undefined)
+        .map((log: any) => {
+          const first = log.schedule?.instructor?.first_name || '';
+          const middle = log.schedule?.instructor?.middle_name || '';
+          const last = log.schedule?.instructor?.last_name || '';
+          const instructorName = `${first} ${middle} ${last}`.trim() || 'Unknown';
+          
+          return {
+            _id: log._id,
+            date: log.date,
+            instructorName: instructorName,
+            courseCode: log.schedule?.courseCode || log.course || 'N/A',
+            courseTitle: log.schedule?.courseTitle || 'N/A',
+            timeIn: log.timeIn,
+            timeOut: log.timeout,
+            room: log.schedule?.room || 'N/A',
+            status: log.status,
+            remarks: log.remarks,
+          };
+        });
 
       setLogs(formattedLogs);
     } catch (error) {

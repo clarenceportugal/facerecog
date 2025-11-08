@@ -32,6 +32,8 @@ import {
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import EditIcon from "@mui/icons-material/Edit";
+import Swal from "sweetalert2";
 
 interface TimeLog {
   _id: string;
@@ -71,6 +73,12 @@ const TimeBreakdown: React.FC = React.memo(() => {
 
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Edit log dialog state
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<TimeLog | null>(null);
+  const [editStatus, setEditStatus] = useState<string>("");
+  const [editRemarks, setEditRemarks] = useState<string>("");
+
   // Extract fetchTimeLogs so it can be called manually for refresh
   const fetchTimeLogs = async () => {
     try {
@@ -96,42 +104,48 @@ const TimeBreakdown: React.FC = React.memo(() => {
         return;
       }
 
-      const formattedLogs: TimeLog[] = response.data.data.map((log: any, index: number) => {
-        console.log(`[TimeBreakdown] Processing log ${index + 1}/${response.data.data.length}:`, {
-          _id: log._id,
-          course: log.course,
-          date: log.date,
-          timeIn: log.timeIn,
-          timeOut: log.timeout,
-          status: log.status,
-          hasSchedule: !!log.schedule,
-          scheduleType: typeof log.schedule,
-          hasInstructor: log.schedule?.instructor ? 'yes' : 'no',
-          instructorData: log.schedule?.instructor
+      const formattedLogs: TimeLog[] = response.data.data
+        .filter((log: any) => {
+          // Filter out logs with null/undefined schedules to avoid "Unknown" entries
+          // These are logs that couldn't be matched to new schedules during replacement
+          return log.schedule !== null && log.schedule !== undefined;
+        })
+        .map((log: any, index: number) => {
+          console.log(`[TimeBreakdown] Processing log ${index + 1}/${response.data.data.length}:`, {
+            _id: log._id,
+            course: log.course,
+            date: log.date,
+            timeIn: log.timeIn,
+            timeOut: log.timeout,
+            status: log.status,
+            hasSchedule: !!log.schedule,
+            scheduleType: typeof log.schedule,
+            hasInstructor: log.schedule?.instructor ? 'yes' : 'no',
+            instructorData: log.schedule?.instructor
+          });
+          
+          // Get instructor name from schedule
+          let instructorName = 'Unknown';
+          if (log.schedule?.instructor) {
+            const first = log.schedule.instructor.first_name || '';
+            const middle = log.schedule.instructor.middle_name || '';
+            const last = log.schedule.instructor.last_name || '';
+            instructorName = `${first} ${middle} ${last}`.trim() || 'Unknown';
+          }
+          
+          return {
+            _id: log._id,
+            date: log.date,
+            instructorName: instructorName,
+            courseCode: log.schedule?.courseCode || log.course || 'N/A',
+            courseTitle: log.schedule?.courseTitle || 'N/A',
+            timeIn: log.timeIn,
+            timeOut: log.timeout,
+            room: log.schedule?.room || 'N/A',
+            status: log.status,
+            remarks: log.remarks || '',
+          };
         });
-        
-        // Get instructor name from schedule
-        let instructorName = 'Unknown';
-        if (log.schedule?.instructor) {
-          const first = log.schedule.instructor.first_name || '';
-          const middle = log.schedule.instructor.middle_name || '';
-          const last = log.schedule.instructor.last_name || '';
-          instructorName = `${first} ${middle} ${last}`.trim() || 'Unknown';
-        }
-        
-        return {
-          _id: log._id,
-          date: log.date,
-          instructorName: instructorName,
-          courseCode: log.schedule?.courseCode || 'N/A',
-          courseTitle: log.schedule?.courseTitle || 'N/A',
-          timeIn: log.timeIn,
-          timeOut: log.timeout,
-          room: log.schedule?.room || 'N/A',
-          status: log.status,
-          remarks: log.remarks || '',
-        };
-      });
 
       console.log(`[TimeBreakdown] ✅ Successfully formatted ${formattedLogs.length} logs`);
       console.log(`[TimeBreakdown] Sample formatted log:`, formattedLogs[0]);
@@ -440,37 +454,53 @@ const TimeBreakdown: React.FC = React.memo(() => {
                       <TableCell>{log.timeOut || "-"}</TableCell>
                       <TableCell>{log.room}</TableCell>
                       <TableCell>
-                        {(() => {
-                          const status = log.status?.toLowerCase();
-                          let chipColor:
-                            | "success"
-                            | "warning"
-                            | "error"
-                            | "info"
-                            | "secondary"
-                            | "default" = "default";
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          {(() => {
+                            const status = log.status?.toLowerCase();
+                            let chipColor:
+                              | "success"
+                              | "warning"
+                              | "error"
+                              | "info"
+                              | "secondary"
+                              | "default" = "default";
 
-                          if (status === "present") chipColor = "success";
-                          else if (status === "late") chipColor = "warning";
-                          else if (status === "absent") chipColor = "error";
-                          else if (status === "left early") chipColor = "secondary";
-                          else if (status === "returned") chipColor = "info";
+                            if (status === "present") chipColor = "success";
+                            else if (status === "late") chipColor = "warning";
+                            else if (status === "absent") chipColor = "error";
+                            else if (status === "excuse") chipColor = "info";
+                            else if (status === "left early") chipColor = "secondary";
+                            else if (status === "returned") chipColor = "info";
 
-                          return (
-                            <Chip
-                              label={log.status}
-                              color={chipColor}
-                              variant="filled"
-                              sx={{
-                                fontWeight: "bold",
-                                textTransform: "capitalize",
-                                borderRadius: "8px",
-                                minWidth: 90,
-                                justifyContent: "center",
-                              }}
-                            />
-                          );
-                        })()}
+                            return (
+                              <Chip
+                                label={log.status}
+                                color={chipColor}
+                                variant="filled"
+                                sx={{
+                                  fontWeight: "bold",
+                                  textTransform: "capitalize",
+                                  borderRadius: "8px",
+                                  minWidth: 90,
+                                  justifyContent: "center",
+                                }}
+                              />
+                            );
+                          })()}
+                          <IconButton
+                            size="small"
+                            onClick={() => {
+                              setSelectedLog(log);
+                              setEditStatus(log.status);
+                              setEditRemarks(log.remarks || "");
+                              setEditDialogOpen(true);
+                            }}
+                            sx={{ ml: 0.5 }}
+                            title="Edit status"
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
                       </TableCell>
                       <TableCell>{log.remarks || "-"}</TableCell>
                     </TableRow>
@@ -499,6 +529,103 @@ const TimeBreakdown: React.FC = React.memo(() => {
           />
         </TableContainer>
       </Box>
+
+      {/* Edit Log Dialog */}
+      <Dialog
+        open={editDialogOpen}
+        onClose={() => setEditDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Edit Attendance Log</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
+            {selectedLog && (
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Instructor:</strong> {selectedLog.instructorName}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Course:</strong> {selectedLog.courseCode} - {selectedLog.courseTitle}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Date:</strong> {new Date(selectedLog.date).toLocaleDateString()}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Time:</strong> {selectedLog.timeIn || "-"} - {selectedLog.timeOut || "-"}
+                </Typography>
+              </>
+            )}
+
+            <FormControl fullWidth>
+              <InputLabel>Status</InputLabel>
+              <Select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value)}
+                label="Status"
+              >
+                <MenuItem value="present">Present</MenuItem>
+                <MenuItem value="late">Late</MenuItem>
+                <MenuItem value="absent">Absent</MenuItem>
+                <MenuItem value="excuse">Excuse</MenuItem>
+                <MenuItem value="Returned">Returned</MenuItem>
+                <MenuItem value="Left early">Left Early</MenuItem>
+              </Select>
+            </FormControl>
+
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Remarks"
+              value={editRemarks}
+              onChange={(e) => setEditRemarks(e.target.value)}
+              placeholder="Enter remarks or reason for status change..."
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (!selectedLog) return;
+
+              try {
+                await axios.put(
+                  `http://localhost:5000/api/auth/logs/${selectedLog._id}`,
+                  {
+                    status: editStatus,
+                    remarks: editRemarks,
+                  }
+                );
+
+                Swal.fire({
+                  icon: "success",
+                  title: "Updated!",
+                  text: "Attendance log has been updated successfully.",
+                  timer: 2000,
+                  showConfirmButton: false,
+                });
+
+                setEditDialogOpen(false);
+                // Refresh logs
+                fetchTimeLogs();
+              } catch (error: any) {
+                console.error("Error updating log:", error);
+                Swal.fire({
+                  icon: "error",
+                  title: "Error",
+                  text: error.response?.data?.message || "Failed to update log. Please try again.",
+                });
+              }
+            }}
+            variant="contained"
+            color="primary"
+          >
+            Save Changes
+          </Button>
+        </DialogActions>
+      </Dialog>
     </AdminMain>
   );
 });

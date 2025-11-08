@@ -55,7 +55,8 @@ const RequiresCompletion: React.FC = () => {
           }
         });
 
-        const response = await axios.post("https://eduvision-dura.onrender.com/api/accountcompletion/save-user-info", formData);
+        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+        const response = await axios.post(`${API_BASE_URL}/api/accountcompletion/save-user-info`, formData);
         console.log(response);
 
         const userId = response.data?.userId;

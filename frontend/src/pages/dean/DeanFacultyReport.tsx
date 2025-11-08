@@ -145,6 +145,11 @@ const DeanFacultyReports: React.FC = React.memo(() => {
   // 🔹 Filter logs by month/year - memoized for performance
   const filteredLogs = useMemo(() => {
     return allLogs.filter((log) => {
+      // Filter out logs with null/undefined schedules
+      if (!log.schedule || log.schedule === null || log.schedule === undefined) {
+        return false;
+      }
+      
       const logDate = new Date(log.date);
       const year = logDate.getFullYear().toString();
       const month = (logDate.getMonth() + 1).toString().padStart(2, "0");
@@ -161,13 +166,18 @@ const DeanFacultyReports: React.FC = React.memo(() => {
     const groupedData: Record<string, AttendanceRow> = {};
 
     filteredLogs.forEach((log: any) => {
+      // Skip logs without valid schedules
+      if (!log.schedule || !log.schedule._id) {
+        return;
+      }
+
       const instructorName = `${log.schedule?.instructor?.last_name ?? ""}, ${
         log.schedule?.instructor?.first_name ?? ""
       } ${
         log.schedule?.instructor?.middle_name
           ? log.schedule.instructor.middle_name.charAt(0) + "."
           : ""
-      }`.trim();
+      }`.trim() || "Unknown";
 
       const key = `${log.schedule._id}`;
 
@@ -182,11 +192,11 @@ const DeanFacultyReports: React.FC = React.memo(() => {
         groupedData[key] = {
           key,
           name: instructorName,
-          courseCode: log.schedule.courseCode,
-          courseTitle: log.schedule.courseTitle,
+          courseCode: log.schedule?.courseCode || log.course || "N/A",
+          courseTitle: log.schedule?.courseTitle || "N/A",
           attendedHours: 0,
           totalHours: 0,
-          room: log.schedule.room,
+          room: log.schedule?.room || "N/A",
           absences: 0,
           late: 0,
         };
@@ -215,7 +225,7 @@ const DeanFacultyReports: React.FC = React.memo(() => {
   const handleRowClick = useCallback(
     (row: AttendanceRow) => {
       const logs = filteredLogs.filter(
-        (log: any) => log.schedule._id === row.key
+        (log: any) => log.schedule && log.schedule._id === row.key
       );
       const detailed: LogDetail[] = logs.map((log: any) => {
         let attended = 0;
@@ -274,9 +284,40 @@ const DeanFacultyReports: React.FC = React.memo(() => {
           selectedYear: selectedYear || null,
           selectedMonth: selectedMonth || null,
         },
-        { responseType: "blob" }
+        { 
+          responseType: "blob",
+          validateStatus: () => true // Don't throw for any status
+        }
       );
 
+      // Check if response is an error (status 400 or 500)
+      if (response.status === 400 || response.status === 500) {
+        // Response is JSON (error) - need to convert blob to text
+        const text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsText(response.data);
+        });
+        
+        try {
+          const errorData = JSON.parse(text);
+          Swal.fire({
+            icon: "warning",
+            title: "No Data Available",
+            text: errorData.message || "No attendance data found for the selected filters.",
+          });
+        } catch (e) {
+          Swal.fire({
+            icon: "error",
+            title: "Error",
+            text: "Failed to generate report. Please try again.",
+          });
+        }
+        return;
+      }
+
+      // Response is blob (success)
       // 🧾 Use course code and selected filters in the filename
       const courseLabel = selectedCourse || "Course";
       const yearLabel = selectedYear ? `_${selectedYear}` : "";
@@ -300,12 +341,35 @@ const DeanFacultyReports: React.FC = React.memo(() => {
         timer: 2000,
         showConfirmButton: false,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating report:", error);
+      
+      // Try to extract error message from response
+      let errorMessage = "Failed to generate report. Please try again.";
+      if (error.response) {
+        if (error.response.data instanceof Blob) {
+          // Try to parse blob as JSON
+          try {
+            const text = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsText(error.response.data);
+            });
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.message || errorMessage;
+          } catch (e) {
+            // Not JSON, use default message
+          }
+        } else if (error.response.data?.message) {
+          errorMessage = error.response.data.message;
+        }
+      }
+      
       Swal.fire({
         icon: "error",
         title: "Error",
-        text: "Failed to generate report. Please try again.",
+        text: errorMessage,
       });
     }
   };

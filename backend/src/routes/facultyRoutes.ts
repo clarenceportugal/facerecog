@@ -385,6 +385,166 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       res.status(500).json({ message: "Server error" });
     }
   });
+
+  // UPDATE LOG STATUS AND REMARKS
+  router.put("/logs/:logId", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { logId } = req.params;
+      const { status, remarks } = req.body;
+
+      if (!mongoose.Types.ObjectId.isValid(logId)) {
+        res.status(400).json({ message: "Invalid log ID" });
+        return;
+      }
+
+      // Validate status
+      const validStatuses = ["present", "late", "absent", "excuse", "Returned", "Left early"];
+      if (status && !validStatuses.includes(status)) {
+        res.status(400).json({ 
+          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` 
+        });
+        return;
+      }
+
+      const log = await Log.findById(logId);
+      if (!log) {
+        res.status(404).json({ message: "Log not found" });
+        return;
+      }
+
+      // Update status if provided
+      if (status) {
+        log.status = status as any;
+      }
+
+      // Update remarks if provided
+      if (remarks !== undefined) {
+        log.remarks = remarks;
+      }
+
+      await log.save();
+
+      console.log(`[UPDATE-LOG] Updated log ${logId}: status=${status || 'unchanged'}, remarks=${remarks !== undefined ? 'updated' : 'unchanged'}`);
+
+      res.json({
+        message: "Log updated successfully",
+        log: log
+      });
+    } catch (error: any) {
+      console.error("Error updating log:", error);
+      res.status(500).json({ 
+        message: "Server error while updating log",
+        error: error.message 
+      });
+    }
+  });
+
+  // MARK ABSENT FOR MISSING ATTENDANCE (Automatic Absent Detection)
+  router.post("/mark-absent-for-day", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { date } = req.body; // Optional: YYYY-MM-DD format, defaults to today
+      
+      // Get the target date (today if not provided) - use same format as other logs
+      const now = new Date();
+      const targetDate = date || now.toLocaleDateString("en-CA"); // YYYY-MM-DD format
+      const targetDateObj = new Date(targetDate);
+      const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][targetDateObj.getDay()];
+      
+      console.log(`[AUTO-ABSENT] Checking for absent faculty on ${targetDate} (${dayOfWeek})`);
+
+      // Find all schedules that should have occurred on this date
+      const schedules = await Schedule.find({
+        semesterStartDate: { $lte: targetDate },
+        semesterEndDate: { $gte: targetDate },
+        [`days.${dayOfWeek}`]: true
+      }).populate('instructor');
+
+      if (schedules.length === 0) {
+        console.log(`[AUTO-ABSENT] No schedules found for ${targetDate}`);
+        res.json({ 
+          message: `No schedules found for ${targetDate}`,
+          absentCount: 0,
+          checkedSchedules: 0
+        });
+        return;
+      }
+
+      console.log(`[AUTO-ABSENT] Found ${schedules.length} schedules for ${targetDate}`);
+
+      // Get all existing logs for this date
+      const existingLogs = await Log.find({
+        date: targetDate
+      });
+      const loggedScheduleIds = new Set(
+        existingLogs.map(log => log.schedule.toString())
+      );
+
+      let absentCount = 0;
+      const absentLogs = [];
+
+      // Check each schedule
+      for (const schedule of schedules) {
+        const scheduleId = (schedule._id as mongoose.Types.ObjectId).toString();
+        
+        // Skip if already logged (present, late, or already marked absent)
+        if (loggedScheduleIds.has(scheduleId)) {
+          continue;
+        }
+
+        // Check if class time has passed (only mark absent after class end time)
+        const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+        const classEndTime = new Date(targetDate);
+        classEndTime.setHours(endHour, endMinute, 0, 0);
+        const now = new Date();
+
+        // Only mark absent if class has ended
+        if (now < classEndTime) {
+          console.log(`[AUTO-ABSENT] Skipping ${schedule.courseCode} - class hasn't ended yet (ends at ${schedule.endTime})`);
+          continue;
+        }
+
+        // Get instructor's college
+        const instructor: any = schedule.instructor;
+        const collegeId = instructor?.college || null;
+
+        // Create absent log
+        const absentLog = new Log({
+          date: targetDate,
+          schedule: schedule._id,
+          status: 'absent',
+          remarks: 'Automatically marked absent - no attendance detected',
+          course: schedule.courseCode || 'N/A',
+          college: collegeId
+        });
+
+        await absentLog.save();
+        absentCount++;
+        absentLogs.push({
+          scheduleId: schedule._id,
+          courseCode: schedule.courseCode,
+          instructorName: instructor ? `${instructor.last_name}, ${instructor.first_name}` : 'Unknown',
+          time: `${schedule.startTime} - ${schedule.endTime}`
+        });
+
+        console.log(`[AUTO-ABSENT] ✅ Marked absent: ${schedule.courseCode} (${schedule.startTime}-${schedule.endTime})`);
+      }
+
+      console.log(`[AUTO-ABSENT] Completed: ${absentCount} absent logs created for ${targetDate}`);
+
+      res.json({
+        message: `Absent detection completed for ${targetDate}`,
+        absentCount,
+        checkedSchedules: schedules.length,
+        absentLogs
+      });
+    } catch (error: any) {
+      console.error('[AUTO-ABSENT] Error marking absent:', error);
+      res.status(500).json({ 
+        message: "Server error while marking absent",
+        error: error.message 
+      });
+    }
+  });
   
   
   // LOG TIME IN FOR FACE RECOGNITION (called by Python recognizer)

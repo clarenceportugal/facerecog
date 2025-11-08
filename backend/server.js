@@ -5,6 +5,7 @@ const express = require('express');
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const http = require('http');
+const https = require('https');
 const path = require('path');
 const readline = require('readline');
 const fs = require('fs');
@@ -14,14 +15,24 @@ const cors = require('cors');
 // ========================================
 // 🔧 CAMERA CONFIGURATION - EDIT HERE
 // ========================================
+// MediaMTX Configuration (enabled - using MediaMTX for streaming)
+// MediaMTX RTSP server port (for pulling streams)
+const MEDIAMTX_RTSP_URL = process.env.MEDIAMTX_RTSP_URL || 'rtsp://localhost:8554';
+// MediaMTX HTTP base URL (for HLS/WebRTC endpoints)
+const MEDIAMTX_BASE_URL = process.env.MEDIAMTX_URL || 'http://localhost:8888';
+const USE_MEDIAMTX = true; // Set to true to use MediaMTX, false to use FFmpeg directly
+
 const CAMERA_CONFIG = {
   camera1: {
     name: 'Camera 1',
-    rtspUrl: 'rtsp://admin:Eduvision124@192.168.8.5:554/Streaming/Channels/101'
+    rtspUrl: 'rtsp://admin:Eduvision124@192.168.8.5:554/Streaming/Channels/101',
+    mediamtxStream: 'mycamera' // MediaMTX stream name (must match the path name in mediamtx.yml)
   },
   camera2: {
     name: 'Camera 2',
-    rtspUrl: 'rtsp://tapoadmin:eduvision124@192.168.8.169:554/stream1'
+    rtspUrl: 'rtsp://tapoadmin:eduvision124@192.168.8.169:554/stream1',
+    mediamtxStream: 'camera2' // MediaMTX stream name (must match the path name in mediamtx.yml)
+    // Note: Make sure this stream is configured in your mediamtx.yml file
   }
 };
 
@@ -473,7 +484,9 @@ app.post('/api/auth/log-time-out', async (req, res) => {
 let pythonReady = false;
 let frameQueue = [];
 let latestDetections = [];
-let latestEvents = [];  // Store events from Python
+let latestEvents = [];
+let latestFrameWidth = 1280;  // Default frame width
+let latestFrameHeight = 720;  // Default frame height
 
 // Spawn Python recognizer worker (ArcFace)
 console.log('Starting Python worker...');
@@ -488,9 +501,11 @@ if (!fs.existsSync(pythonScriptPath)) {
   process.exit(1);
 }
 
-const pythonCommand = 'python';
+// Use Python 3.13 where packages are installed
+const pythonCommand = process.platform === 'win32' ? 'py' : 'python3';
+const pythonArgs = process.platform === 'win32' ? ['-3.13', pythonScriptPath] : [pythonScriptPath];
 
-const python = spawn(pythonCommand, [pythonScriptPath], {
+const python = spawn(pythonCommand, pythonArgs, {
   stdio: ['pipe', 'pipe', 'pipe']
 });
 
@@ -499,16 +514,26 @@ console.log('[DEBUG] Python process spawned with PID:', python.pid);
 // Handle Python stderr for logging
 python.stderr.on('data', (data) => {
   const msg = data.toString().trim();
-  console.log('[Python]', msg);
+  // Log all Python stderr output for debugging
+  if (msg.length > 0) {
+    console.log('[Python]', msg);
+  }
   
-  if (msg.includes('ERROR') || msg.includes('Traceback')) {
-    console.error('[Python ERROR]', msg);
+  if (msg.includes('ERROR') || msg.includes('Traceback') || msg.includes('WARNING')) {
+    console.error('[Python ERROR/WARNING]', msg);
+  }
+  
+  // Check for important status messages
+  if (msg.includes('READY') || msg.includes('ArcFace model loaded') || msg.includes('Detected') || msg.includes('No faces detected')) {
+    console.log('[Python Status]', msg);
   }
 });
 
 // Handle Python exit
 python.on('exit', (code, signal) => {
-  console.log(`Python process exited with code ${code}, signal ${signal}`);
+  console.error(`❌ Python process exited with code ${code}, signal ${signal}`);
+  console.error('❌ Face detection will not work until Python service is restarted!');
+  console.error('❌ Make sure recognizer_arcface.py is running and can process frames.');
   pythonReady = false;
 });
 
@@ -526,8 +551,13 @@ const rl = readline.createInterface({ input: python.stdout });
 rl.on('line', (line) => {
   line = line.trim();
   
+  // Skip empty lines
+  if (!line) return;
+  
+  // Handle READY signal
   if (line === 'READY') {
     console.log('✓ Python worker is READY');
+    console.log(`[DEBUG] Python ready - will start sending frames. Queue has ${frameQueue.length} frames.`);
     pythonReady = true;
     
     if (frameQueue.length > 0) {
@@ -538,15 +568,44 @@ rl.on('line', (line) => {
     return;
   }
   
+  // Filter out insightface/onnxruntime debug messages (they're not JSON)
+  // These messages start with common prefixes that aren't JSON
+  if (line.startsWith('Applied providers:') ||
+      line.startsWith('find model:') ||
+      line.startsWith('set det-size:') ||
+      line.match(/^\d{4}-\d{2}-\d{2}/)) { // Date timestamps
+    // These are debug messages from insightface/onnxruntime, ignore them
+    return;
+  }
+  
   try {
     const msg = JSON.parse(line);
     if (msg.faces !== undefined) {
       latestDetections = msg.faces;
       
+      // Store frame resolution for accurate box scaling
+      if (msg.frame_width !== undefined) {
+        latestFrameWidth = msg.frame_width;
+      }
+      if (msg.frame_height !== undefined) {
+        latestFrameHeight = msg.frame_height;
+      }
+      
+      // Calculate time from first frame sent to first detection
+      if (firstFrameSentTime && framesSentToPython === 1) {
+        const timeToFirstDetection = Date.now() - firstFrameSentTime;
+        console.log(`[DEBUG] ⏱️ Time from first frame sent to first detection: ${timeToFirstDetection}ms`);
+        firstFrameSentTime = null; // Reset after first detection
+      }
+      
       console.log(`[DEBUG] Received detection: ${msg.faces.length} face(s)`);
       if (msg.faces.length > 0) {
         const names = msg.faces.map(f => f.name).join(', ');
         console.log(`[Detection] Found ${msg.faces.length} face(s): ${names}`);
+        // Log first face details for debugging
+        console.log(`[DEBUG] First face details:`, JSON.stringify(msg.faces[0], null, 2));
+      } else {
+        console.log(`[DEBUG] No faces detected in this frame`);
       }
     }
     // Store events from Python
@@ -555,55 +614,395 @@ rl.on('line', (line) => {
       console.log(`[DEBUG] Received ${msg.events.length} event(s):`, msg.events.map(e => e.type).join(', '));
     }
   } catch (err) {
-    console.error('Bad JSON from Python:', line);
-    console.error('Raw line:', line);
+    // Only log JSON errors for lines that look like they might be JSON
+    if (line.startsWith('{') || line.startsWith('[')) {
+      console.error('Bad JSON from Python:', err.message);
+      console.error('Raw line (first 200 chars):', line.substring(0, 200));
+    }
+    // Otherwise, it's probably a debug message from insightface, ignore it
   }
 });
 
 // Helper to send frame to Python
 let framesSentToPython = 0;
+let framesDroppedBecauseNotReady = 0;
+let framesDroppedBecauseBufferFull = 0;
+let frameSkipCounter = 0;
+let firstFrameSentTime = null;
+
+// ⏱️ PROFILING: Track frame timings
+let frameCaptureTimestamps = new Map(); // frameNumber -> capture timestamp
+let frameToClientTimestamps = new Map(); // frameNumber -> sent to client timestamp
+let totalFrameCaptureToClient = 0;
+let totalFramesToClient = 0;
+      // Frame skip rate: Lower = more frames processed (faster detection), Higher = fewer frames (better for CPU)
+      // Increased to 15 for very slow CPUs - detection still taking ~1 second per frame
+      const FRAME_SKIP_RATE = 15; // Process every 15th frame (~1 FPS) - Optimized for slow CPUs taking 1s per frame
+
 function sendFrameToPython(jpgBuffer, cameraId) {
   if (!pythonReady) {
     if (frameQueue.length < 100) {
       frameQueue.push({ jpgBuffer, cameraId });
+      if (frameQueue.length === 1) {
+        console.log(`[DEBUG] Python not ready yet - queuing frame (queue size: ${frameQueue.length})`);
+        console.log(`[DEBUG] Waiting for Python to initialize (loading model and embeddings)...`);
+      }
+    } else {
+      framesDroppedBecauseNotReady++;
+      if (framesDroppedBecauseNotReady % 100 === 0) {
+        console.warn(`[WARNING] Python not ready - dropped ${framesDroppedBecauseNotReady} frames. Check if Python service is running.`);
+      }
     }
     return;
+  }
+  
+  // Skip frames to reduce load (process every Nth frame)
+  frameSkipCounter++;
+  if (frameSkipCounter % FRAME_SKIP_RATE !== 0) {
+    return; // Skip this frame
+  }
+  
+  // Track timing for first frame
+  if (framesSentToPython === 0) {
+    firstFrameSentTime = Date.now();
   }
   
   try {
     const lenBuf = Buffer.alloc(4);
     lenBuf.writeUInt32BE(jpgBuffer.length, 0);
-    python.stdin.write(Buffer.concat([lenBuf, jpgBuffer]));
+    const data = Buffer.concat([lenBuf, jpgBuffer]);
+    const success = python.stdin.write(data);
+    
+    if (!success) {
+      // Buffer is full - wait for drain event
+      framesDroppedBecauseBufferFull++;
+      if (framesDroppedBecauseBufferFull % 50 === 0) {
+        console.warn(`[WARNING] Python stdin buffer full - dropped ${framesDroppedBecauseBufferFull} frames. Python is processing too slowly.`);
+        console.warn(`[WARNING] Consider reducing frame rate or increasing FRAME_SKIP_RATE (currently ${FRAME_SKIP_RATE})`);
+      }
+      // Don't wait - just drop this frame and continue
+      return;
+    }
+    
     framesSentToPython++;
     
-    if (framesSentToPython % 100 === 0) {
-      console.log(`[DEBUG] Sent ${framesSentToPython} frames to Python`);
+    if (framesSentToPython === 1) {
+      console.log(`[DEBUG] First frame sent to Python (size: ${jpgBuffer.length} bytes, skipping every ${FRAME_SKIP_RATE} frames)`);
+      console.log(`[DEBUG] Python should process this frame and return detection results soon...`);
+    }
+    
+    if (framesSentToPython % 50 === 0) {
+      console.log(`[DEBUG] Sent ${framesSentToPython} frames to Python (dropped ${framesDroppedBecauseBufferFull} due to buffer full, last detection had ${latestDetections.length} face(s))`);
     }
   } catch (err) {
     console.error('Error writing to Python stdin:', err);
+    console.error('Python process may have crashed. Check Python service logs.');
+    pythonReady = false;
   }
 }
+
+// Handle Python stdin drain event (buffer has space again)
+python.stdin.on('drain', () => {
+  console.log('[DEBUG] Python stdin buffer drained - ready for more frames');
+});
 
 // ========================================
 // 📹 CAMERA STREAM HANDLER
 // ========================================
 
-function startCameraStream(ws, cameraId, rtspUrl, cameraName) {
-  console.log(`Starting ${cameraName} (${cameraId}): ${rtspUrl}`);
+function startCameraStream(ws, cameraId, rtspUrl, cameraName, mediamtxStream) {
+  console.log(`Starting ${cameraName} (${cameraId})`);
+  
+  // Use MediaMTX: Pull RTSP stream from MediaMTX and convert to MJPEG with FFmpeg
+  // This way MediaMTX handles the camera connection, and FFmpeg converts to MJPEG
+  if (USE_MEDIAMTX) {
+    if (!mediamtxStream) {
+      const errorMsg = `MediaMTX is enabled but no stream name configured for ${cameraId}. Please add mediamtxStream to camera config.`;
+      console.error(`[${cameraName}] ${errorMsg}`);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          cameraId,
+          status: 'error',
+          error: errorMsg
+        }));
+      }
+      return;
+    }
+    // Use MediaMTX's RTSP endpoint: rtsp://localhost:8554/mycamera
+    const mediamtxRtspUrl = `${MEDIAMTX_RTSP_URL}/${mediamtxStream}`;
+    console.log(`Using MediaMTX RTSP stream: ${mediamtxRtspUrl}`);
+    console.log(`MediaMTX pulls from camera: ${rtspUrl}`);
+    return startFFmpegStream(ws, cameraId, mediamtxRtspUrl, cameraName);
+  } else {
+    console.log(`Using FFmpeg to convert RTSP directly: ${rtspUrl}`);
+    return startFFmpegStream(ws, cameraId, rtspUrl, cameraName);
+  }
+}
 
+function startMediaMTXStream(ws, cameraId, streamName, cameraName, retryCount = 0) {
+  const mjpegUrl = `${MEDIAMTX_BASE_URL}/${streamName}/mjpeg`;
+  const httpModule = mjpegUrl.startsWith('https') ? https : http;
+  
+  let frameCount = 0;
+  let pythonFrameCount = 0;
+  let currentFrame = Buffer.alloc(0);
+  const SOI = Buffer.from([0xFF, 0xD8]);
+  const EOI = Buffer.from([0xFF, 0xD9]);
+  
+  if (!ws.cameras) ws.cameras = {};
+  
+  console.log(`[${cameraName}] Requesting MediaMTX MJPEG stream: ${mjpegUrl}`);
+  console.log(`[${cameraName}] Make sure MediaMTX is running and has successfully pulled the stream from the camera.`);
+  
+  const req = httpModule.get(mjpegUrl, (res) => {
+    if (res.statusCode === 400) {
+      // 400 Bad Request usually means stream is not ready yet (sourceOnDemand)
+      // MediaMTX needs time to pull the stream from the camera
+      let errorBody = '';
+      res.on('data', (chunk) => {
+        errorBody += chunk.toString();
+      });
+      res.on('end', () => {
+        console.warn(`[${cameraName}] MediaMTX stream not ready yet (400). ${errorBody || 'Stream is being pulled on-demand.'}`);
+        
+        // Retry after a delay (up to 3 times)
+        if (retryCount < 3) {
+          const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+          console.log(`[${cameraName}] Retrying in ${delay/1000} seconds... (attempt ${retryCount + 1}/3)`);
+          setTimeout(() => {
+            startMediaMTXStream(ws, cameraId, streamName, cameraName, retryCount + 1);
+          }, delay);
+        } else {
+          // After 3 retries, send error to client
+          const errorMsg = `MediaMTX stream "${streamName}" is not available after ${retryCount + 1} attempts. Check MediaMTX logs to see if it can connect to the camera. The camera works in VLC, so verify MediaMTX configuration in mediamtx.yml matches the camera RTSP URL.`;
+          console.error(`[${cameraName}] ${errorMsg}`);
+          console.error(`[${cameraName}] Troubleshooting:`);
+          console.error(`[${cameraName}] 1. Check MediaMTX logs for connection errors`);
+          console.error(`[${cameraName}] 2. Verify camera RTSP URL in mediamtx.yml: rtsp://admin:Eduvision124@192.168.8.5:554/Streaming/Channels/101`);
+          console.error(`[${cameraName}] 3. Test camera in VLC with the same RTSP URL`);
+          console.error(`[${cameraName}] 4. Try accessing MediaMTX stream directly: ${mjpegUrl}`);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              cameraId,
+              status: 'error',
+              error: errorMsg
+            }));
+          }
+        }
+      });
+      return;
+    }
+    
+    if (res.statusCode !== 200) {
+      console.error(`[${cameraName}] MediaMTX request failed: ${res.statusCode}`);
+      console.error(`[${cameraName}] URL: ${mjpegUrl}`);
+      
+      let errorBody = '';
+      res.on('data', (chunk) => {
+        errorBody += chunk.toString();
+      });
+      res.on('end', () => {
+        const errorMsg = errorBody 
+          ? `MediaMTX request failed: ${res.statusCode} - ${errorBody}`
+          : `MediaMTX request failed: ${res.statusCode}. Check if stream "${streamName}" exists in MediaMTX.`;
+        
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            cameraId,
+            status: 'error',
+            error: errorMsg
+          }));
+        }
+      });
+      return;
+    }
+    
+    ws.cameras[cameraId] = {
+      request: req,
+      frameCount: 0,
+      name: cameraName
+    };
+    
+    ws.send(JSON.stringify({
+      cameraId,
+      status: 'connected',
+      cameraName
+    }));
+    
+    res.on('data', (chunk) => {
+      currentFrame = Buffer.concat([currentFrame, chunk]);
+      
+      // Find JPEG frames (SOI to EOI)
+      while (true) {
+        const startIdx = currentFrame.indexOf(SOI);
+        if (startIdx === -1) {
+          // Keep last 64KB in case SOI is split across chunks
+          if (currentFrame.length > 65536) {
+            currentFrame = currentFrame.slice(-65536);
+          }
+          break;
+        }
+        
+        const endIdx = currentFrame.indexOf(EOI, startIdx + 2);
+        if (endIdx === -1) {
+          // Keep from SOI in case EOI is in next chunk
+          currentFrame = currentFrame.slice(startIdx);
+          break;
+        }
+        
+      const jpeg = currentFrame.slice(startIdx, endIdx + 2);
+      currentFrame = currentFrame.slice(endIdx + 2);
+      frameCount++;
+      pythonFrameCount++;
+      
+      // ⏱️ PROFILING: Mark frame capture timestamp
+      const frameCaptureTime = Date.now();
+      frameCaptureTimestamps.set(frameCount, frameCaptureTime);
+      
+      // Send every frame to Python for face recognition
+      sendFrameToPython(jpeg, cameraId);
+        
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            // ⏱️ PROFILING: Calculate latency from frame capture to client
+            const captureTime = frameCaptureTimestamps.get(frameCount);
+            const sendToClientTime = Date.now();
+            
+            if (captureTime) {
+              const totalLatency = sendToClientTime - captureTime;
+              totalFrameCaptureToClient += totalLatency;
+              totalFramesToClient++;
+              
+              // Log latency for frames with faces
+              if (latestDetections.length > 0) {
+                console.log(`[⏱️ PROFILE] Frame ${frameCount}: Total latency (capture→client) = ${totalLatency}ms with ${latestDetections.length} face(s)`);
+              }
+              
+              // Report average every 100 frames
+              if (frameCount % 100 === 0) {
+                const avgLatency = totalFrameCaptureToClient / totalFramesToClient;
+                console.log(`[📊 SERVER STATS] After ${frameCount} frames - AVG latency (capture→client): ${avgLatency.toFixed(1)}ms`);
+              }
+              
+              // Cleanup old timestamps to prevent memory leak
+              if (frameCount > 1000) {
+                frameCaptureTimestamps.delete(frameCount - 1000);
+              }
+            }
+            
+            const metadataStr = JSON.stringify({
+              cameraId,
+              frameNumber: frameCount,
+              faces: latestDetections,
+              events: latestEvents,
+              frame_width: latestFrameWidth,
+              frame_height: latestFrameHeight
+            });
+            
+            const metadataLen = Buffer.alloc(4);
+            metadataLen.writeUInt32BE(metadataStr.length, 0);
+            
+            const payload = Buffer.concat([
+              metadataLen,
+              Buffer.from(metadataStr),
+              jpeg
+            ]);
+            
+            ws.send(payload, { binary: true });
+            
+            if (latestEvents.length > 0) {
+              latestEvents = [];
+            }
+          } catch (err) {
+            console.error(`[${cameraName}] Error sending frame:`, err);
+          }
+        }
+        
+        if (frameCount % 200 === 0) {
+          console.log(`[${cameraName}] Sent ${frameCount} frames`);
+        }
+      }
+    });
+    
+    res.on('end', () => {
+      console.log(`[${cameraName}] MediaMTX stream ended`);
+      ws.send(JSON.stringify({
+        cameraId,
+        status: 'disconnected'
+      }));
+    });
+    
+    res.on('error', (err) => {
+      console.error(`[${cameraName}] MediaMTX stream error:`, err);
+      ws.send(JSON.stringify({
+        cameraId,
+        status: 'error',
+        error: err.message
+      }));
+    });
+  });
+  
+  req.on('error', (err) => {
+    const errorMsg = err.message || err.code || 'Unknown error';
+    console.error(`[${cameraName}] MediaMTX request error:`, err);
+    console.error(`[${cameraName}] Error details:`, {
+      code: err.code,
+      message: err.message,
+      syscall: err.syscall,
+      address: err.address,
+      port: err.port
+    });
+    
+    let userFriendlyError = `Failed to connect to MediaMTX`;
+    if (err.code === 'ECONNREFUSED') {
+      userFriendlyError = `MediaMTX is not running at ${MEDIAMTX_BASE_URL}. Please start MediaMTX first.`;
+    } else if (err.code === 'ETIMEDOUT') {
+      userFriendlyError = `MediaMTX connection timeout. Check if MediaMTX is running at ${MEDIAMTX_BASE_URL}`;
+    } else if (err.code === 'ENOTFOUND') {
+      userFriendlyError = `Cannot resolve MediaMTX host. Check MEDIAMTX_URL configuration.`;
+    } else if (errorMsg) {
+      userFriendlyError = `Failed to connect to MediaMTX: ${errorMsg}`;
+    }
+    
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        cameraId,
+        status: 'error',
+        error: userFriendlyError
+      }));
+    }
+  });
+  
+  req.setTimeout(30000, () => {
+    console.error(`[${cameraName}] MediaMTX request timeout after 30 seconds`);
+    console.error(`[${cameraName}] Check if MediaMTX is running at ${MEDIAMTX_BASE_URL}`);
+    console.error(`[${cameraName}] Try accessing: ${mjpegUrl}`);
+    req.destroy();
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        cameraId,
+        status: 'error',
+        error: `MediaMTX request timeout. Check if MediaMTX is running and the stream "${streamName}" exists.`
+      }));
+    }
+  });
+}
+
+function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
   const ffmpeg = spawn('ffmpeg', [
     '-rtsp_transport', 'tcp',
     '-fflags', 'nobuffer+fastseek+flush_packets',
     '-flags', 'low_delay',
     '-strict', 'experimental',
-    '-analyzeduration', '50000',  // Reduced for faster startup
-    '-probesize', '50000',         // Reduced for faster startup
+    '-analyzeduration', '1000',
+    '-probesize', '1000',
     '-i', rtspUrl,
     '-f', 'mjpeg',
-    '-q:v', '7',                   // Slightly lower quality (7 vs 5) for faster encoding
-    '-vf', 'fps=20,scale=480:360', // Optimized: 20 FPS at 480x360 for speed + smooth stream
+    '-q:v', '5',
+    '-vf', 'fps=15,scale=1280:720',  // Reduced from 30 FPS to 15 FPS to reduce load
+    '-thread_queue_size', '2',
     '-'
-  ], { 
+  ], {
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
@@ -647,18 +1046,24 @@ function startCameraStream(ws, cameraId, rtspUrl, cameraName) {
       frameCount++;
 
       pythonFrameCount++;
-      // Send every 2nd frame for faster "no face" detection (20 FPS → ~10 FPS detection)
-      if (pythonFrameCount % 2 === 0) {
-        sendFrameToPython(jpeg, cameraId);
-      }
+      // Process every frame for better accuracy on i5 12th gen + RTX 4050 (30 FPS detection)
+      // With more powerful hardware, we can process all frames for real-time recognition
+      sendFrameToPython(jpeg, cameraId);
 
       if (ws.readyState === WebSocket.OPEN) {
         try {
+          // Log detection status periodically
+          if (frameCount % 100 === 0 && latestDetections.length > 0) {
+            console.log(`[${cameraName}] Sending frame ${frameCount} with ${latestDetections.length} face(s) to client`);
+          }
+          
           const metadataStr = JSON.stringify({
             cameraId,
             frameNumber: frameCount,
             faces: latestDetections,
-            events: latestEvents
+            events: latestEvents,
+            frame_width: latestFrameWidth,
+            frame_height: latestFrameHeight
           });
           
           const metadataLen = Buffer.alloc(4);
@@ -710,11 +1115,25 @@ function startCameraStream(ws, cameraId, rtspUrl, cameraName) {
   });
 
   ffmpeg.on('error', (err) => {
-    console.error(`[${cameraName}] FFmpeg error:`, err);
+    let errorMessage = err.message;
+    
+    // Provide helpful error message for ENOENT (FFmpeg not found)
+    if (err.code === 'ENOENT') {
+      errorMessage = 'FFmpeg is not installed or not in PATH. Please install FFmpeg from https://ffmpeg.org/download.html and add it to your system PATH.';
+      console.error(`[${cameraName}] ❌ FFmpeg not found!`);
+      console.error(`[${cameraName}] Please install FFmpeg:`);
+      console.error(`[${cameraName}] 1. Download from: https://ffmpeg.org/download.html`);
+      console.error(`[${cameraName}] 2. Extract and add the bin folder to your system PATH`);
+      console.error(`[${cameraName}] 3. Restart the server`);
+    } else {
+      console.error(`[${cameraName}] FFmpeg error:`, err);
+    }
+    
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         cameraId,
-        error: err.message
+        status: 'error',
+        error: errorMessage
       }));
     }
   });
@@ -752,19 +1171,30 @@ wss.on('connection', (ws, req) => {
 
         if (ws.cameras[cameraId]) {
           try {
-            ws.cameras[cameraId].ffmpeg.kill('SIGKILL');
+            // Stop existing stream (FFmpeg or MediaMTX)
+            if (ws.cameras[cameraId].ffmpeg && !ws.cameras[cameraId].ffmpeg.killed) {
+              ws.cameras[cameraId].ffmpeg.kill('SIGKILL');
+            }
+            if (ws.cameras[cameraId].request) {
+              ws.cameras[cameraId].request.destroy();
+            }
           } catch (e) {
-            console.error(`Error killing existing FFmpeg for ${cameraId}:`, e);
+            console.error(`Error stopping existing stream for ${cameraId}:`, e);
           }
         }
 
-        startCameraStream(ws, cameraId, cameraConfig.rtspUrl, cameraConfig.name);
+        startCameraStream(ws, cameraId, cameraConfig.rtspUrl, cameraConfig.name, cameraConfig.mediamtxStream);
       }
       else if (data.type === 'stop') {
         Object.keys(ws.cameras).forEach(cameraId => {
           try {
+            // Stop FFmpeg stream
             if (ws.cameras[cameraId].ffmpeg && !ws.cameras[cameraId].ffmpeg.killed) {
               ws.cameras[cameraId].ffmpeg.kill('SIGKILL');
+            }
+            // Stop MediaMTX stream
+            if (ws.cameras[cameraId].request) {
+              ws.cameras[cameraId].request.destroy();
             }
           } catch (e) {
             console.error(`Error stopping ${cameraId}:`, e);
@@ -783,12 +1213,18 @@ wss.on('connection', (ws, req) => {
     
     Object.keys(ws.cameras).forEach(cameraId => {
       try {
+        // Stop FFmpeg stream
         if (ws.cameras[cameraId].ffmpeg && !ws.cameras[cameraId].ffmpeg.killed) {
           ws.cameras[cameraId].ffmpeg.kill('SIGKILL');
           console.log(`Stopped ${ws.cameras[cameraId].name}`);
         }
+        // Stop MediaMTX stream
+        if (ws.cameras[cameraId].request) {
+          ws.cameras[cameraId].request.destroy();
+          console.log(`Stopped MediaMTX stream for ${ws.cameras[cameraId].name}`);
+        }
       } catch (e) {
-        console.error(`Error killing FFmpeg for ${cameraId}:`, e);
+        console.error(`Error stopping stream for ${cameraId}:`, e);
       }
     });
   });
@@ -827,8 +1263,75 @@ process.on('SIGINT', () => {
 // 🚀 START SERVER
 // ========================================
 
+// Check if MediaMTX is available at startup
+if (USE_MEDIAMTX) {
+  // Try to connect to MediaMTX HTTP server (HLS port)
+  const mediamtxCheckUrl = `${MEDIAMTX_BASE_URL}/`;
+  const httpModule = mediamtxCheckUrl.startsWith('https') ? https : http;
+  
+  const checkReq = httpModule.get(mediamtxCheckUrl, (res) => {
+    if (res.statusCode === 200 || res.statusCode === 404 || res.statusCode === 301) {
+      // 200/404/301 = MediaMTX is running (various responses depending on version)
+      console.log(`✅ MediaMTX is running (HTTP: ${MEDIAMTX_BASE_URL}, RTSP: ${MEDIAMTX_RTSP_URL})`);
+      console.log(`   MediaMTX will pull camera streams and serve them via RTSP`);
+    } else {
+      console.warn(`⚠️ MediaMTX check returned status code: ${res.statusCode}`);
+    }
+    res.on('data', () => {}); // Consume response
+    res.on('end', () => {});
+  });
+  
+  checkReq.on('error', (err) => {
+    if (err.code === 'ECONNREFUSED') {
+      console.error('❌ Cannot connect to MediaMTX!');
+      console.error(`   HTTP URL: ${MEDIAMTX_BASE_URL}`);
+      console.error(`   RTSP URL: ${MEDIAMTX_RTSP_URL}`);
+      console.error('   MediaMTX is not running. Please start MediaMTX first.');
+      console.error('   Camera streaming will not work without MediaMTX.');
+    } else {
+      console.error('❌ Cannot connect to MediaMTX!');
+      console.error(`   HTTP URL: ${MEDIAMTX_BASE_URL}`);
+      console.error(`   RTSP URL: ${MEDIAMTX_RTSP_URL}`);
+      console.error(`   Error: ${err.message || err.code || 'Unknown error'}`);
+      console.error('   Please make sure MediaMTX is running and accessible.');
+      console.error('   Camera streaming will not work without MediaMTX.');
+    }
+  });
+  
+  checkReq.setTimeout(5000, () => {
+    console.warn('⚠️ MediaMTX check timeout - MediaMTX may not be running');
+    console.warn('   The server will continue, but camera streaming may not work.');
+    checkReq.destroy();
+  });
+} else {
+  // Check if FFmpeg is available at startup (only if not using MediaMTX)
+  const ffmpegCheck = spawn('ffmpeg', ['-version'], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  ffmpegCheck.on('close', (code) => {
+    if (code === 0) {
+      console.log('✅ FFmpeg is available');
+    } else {
+      console.warn('⚠️ FFmpeg check returned non-zero exit code');
+    }
+  });
+
+  ffmpegCheck.on('error', (err) => {
+    if (err.code === 'ENOENT') {
+      console.error('❌ FFmpeg is not installed or not in PATH!');
+      console.error('   Camera streaming will not work without FFmpeg.');
+      console.error('   Please install FFmpeg from: https://ffmpeg.org/download.html');
+      console.error('   After installation, add FFmpeg bin folder to your system PATH.');
+    } else {
+      console.error('⚠️ FFmpeg check error:', err.message);
+    }
+  });
+}
+
 server.listen(STREAMING_PORT, '0.0.0.0', () => {
   console.log('Server running at http://localhost:3000');
+  console.log(`Using ${USE_MEDIAMTX ? 'MediaMTX' : 'FFmpeg'} for camera streaming`);
   console.log('Waiting for Python worker to initialize...');
   console.log('🚀 Optimized for low latency & high FPS!');
 });

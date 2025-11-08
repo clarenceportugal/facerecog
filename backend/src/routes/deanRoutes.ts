@@ -159,6 +159,8 @@ router.post(
       const query: any = {};
       if (courseCode) query.course = courseCode;
 
+      console.log(`[REPORT] Generating dean report for courseCode: "${courseCode}", Month: ${selectedMonth}, Year: ${selectedYear}`);
+
       // 🔹 Fetch all logs first
       const logs = await Log.find(query)
         .populate({
@@ -171,8 +173,15 @@ router.post(
         .populate("college")
         .lean();
 
-      // 🔹 Filter logs by month and year before grouping
+      console.log(`[REPORT] Fetched ${logs.length} total logs from database`);
+
+      // 🔹 Filter logs by month and year before grouping, and filter out logs with null schedules
       const filteredLogs = logs.filter((log: any) => {
+        // Filter out logs with null/undefined schedules
+        if (!log.schedule || log.schedule === null || log.schedule === undefined) {
+          return false;
+        }
+        
         if (!log.date) return false;
         const logDate = new Date(log.date);
         const logYear = logDate.getFullYear();
@@ -188,11 +197,18 @@ router.post(
         return matchesYear && matchesMonth;
       });
 
+      console.log(`[REPORT] Filtered ${filteredLogs.length} logs for report generation`);
+
       // 🔹 Group filtered logs by schedule
       const grouped: Record<string, any> = {};
       for (const log of filteredLogs) {
         const schedule: any = log.schedule || {};
         const instructorObj = schedule?.instructor;
+
+        // Skip if no schedule ID
+        if (!schedule._id) {
+          continue;
+        }
 
         const instructorName = instructorObj
           ? `${instructorObj.last_name}, ${instructorObj.first_name} ${
@@ -245,6 +261,16 @@ router.post(
 
       const tableData = Object.values(grouped);
 
+      console.log(`[REPORT] Generated ${tableData.length} grouped records for report`);
+
+      if (tableData.length === 0) {
+        res.status(400).json({ 
+          success: false, 
+          message: "No attendance data found for the selected filters. Please adjust your filters and try again." 
+        });
+        return;
+      }
+
       // 🔹 Report metadata — based on selected filters
       const reportMonth = selectedMonth
         ? new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
@@ -260,6 +286,17 @@ router.post(
         __dirname,
         "../../templates/MonthlyReports.docx"
       );
+
+      // Check if template exists
+      if (!fs.existsSync(templatePath)) {
+        console.error(`[REPORT] Template not found at: ${templatePath}`);
+        res.status(500).json({ 
+          success: false, 
+          message: "Report template not found. Please contact administrator." 
+        });
+        return;
+      }
+
       const content = fs.readFileSync(templatePath, "binary");
       const zip = new PizZip(content);
       const doc = new Docxtemplater(zip, {
@@ -283,7 +320,12 @@ router.post(
       const outputPath = path.join(outputDir, "MonthlyDepartmentReport.docx");
 
       fs.writeFileSync(outputPath, buffer);
-      res.download(outputPath, "MonthlyDepartmentReport.docx");
+      
+      console.log(`[REPORT] Report generated successfully with ${tableData.length} records`);
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', `attachment; filename="MonthlyDepartmentReport.docx"`);
+      res.send(buffer);
     } catch (error: unknown) {
       if (error instanceof Error) {
         console.error(

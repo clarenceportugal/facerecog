@@ -24,6 +24,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import axios from "axios";
+import { API_BASE_URL } from "../../utils/api";
 
 interface ScheduleItem {
   courseCode: string;
@@ -115,7 +116,8 @@ const FacultySchedule: React.FC = () => {
         console.log("Fetching all schedules for facultyId:", facultyId);
 
         const { data } = await axios.get(
-          `http://localhost:5000/api/auth/faculty-schedules/${facultyId}`
+          `${API_BASE_URL}/api/auth/schedules-faculty`,
+          { params: { facultyId } }
         );
 
         console.log("Raw schedule data:", data);

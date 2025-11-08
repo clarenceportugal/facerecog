@@ -139,7 +139,10 @@ router.post(
 
       let courseDoc = null;
       if (role !== "dean") {
-        courseDoc = await Course.findOne({ code: program });
+        // Case-insensitive search for course code
+        courseDoc = await Course.findOne({ 
+          code: { $regex: new RegExp(`^${program}$`, "i") }
+        });
         if (!courseDoc) {
           res.status(400).json({
             success: false,

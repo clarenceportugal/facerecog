@@ -72,12 +72,12 @@ start "EduVision Backend" cmd /k "cd /d %~dp0backend && npm run dev"
 timeout /t 3 /nobreak >nul
 
 echo Starting Face Recognition Service (Python)...
-start "EduVision Face Recognition" cmd /k "cd /d %~dp0streaming-server && python recognizer_arcface.py"
+start "EduVision Face Recognition" cmd /k "cd /d %~dp0backend && py -3.13 recognizer_arcface.py"
 
 timeout /t 3 /nobreak >nul
 
 echo Starting Background Removal Service (Python)...
-start "EduVision Background Removal" cmd /k "cd /d %~dp0streaming-server && python simple_background_removal.py"
+start "EduVision Background Removal" cmd /k "cd /d %~dp0streaming-server && py -3.13 simple_background_removal.py"
 
 timeout /t 3 /nobreak >nul
 
@@ -102,7 +102,7 @@ echo   ✓ Background Removal: Python service running
 echo   ✓ Node.js Server: Additional service running
 echo.
 echo NOTE: If Python services fail due to missing packages,
-echo       run: pip install rembg pillow opencv-python-headless
+echo       run: py -3.13 -m pip install insightface onnxruntime-gpu
 echo.
 echo Press any key to open the application in browser...
 pause >nul

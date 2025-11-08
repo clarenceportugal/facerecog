@@ -188,10 +188,15 @@ router.post(
   "/generate-monthly-department-logs",
   async (req: Request, res: Response) => {
     try {
-      const { CourseName, selectedMonth, selectedYear } = req.body;
+      const { CourseName, selectedMonth, selectedYear, searchQuery } = req.body;
 
+      // Don't filter by course field - it contains courseCode not program name
+      // Match the behavior of show-monthly-department-logs which fetches all logs
       const query: any = {};
-      if (CourseName) query.course = CourseName;
+      // Note: CourseName is the program (e.g., "bsit"), but log.course contains courseCode
+      // For now, fetch all logs to match the display behavior
+
+      console.log(`[REPORT] Generating report for CourseName: "${CourseName}", Month: ${selectedMonth}, Year: ${selectedYear}, SearchQuery: "${searchQuery}"`);
 
       // 🔹 Fetch all logs first
       const logs = await Log.find(query)
@@ -205,8 +210,15 @@ router.post(
         .populate("college")
         .lean();
 
-      // 🔹 Filter logs by month and year before grouping
+      console.log(`[REPORT] Fetched ${logs.length} total logs from database`);
+
+      // 🔹 Filter logs by month and year before grouping, and filter out logs with null schedules
       const filteredLogs = logs.filter((log: any) => {
+        // Filter out logs with null/undefined schedules
+        if (!log.schedule || log.schedule === null || log.schedule === undefined) {
+          return false;
+        }
+        
         if (!log.date) return false;
         const logDate = new Date(log.date);
         const logYear = logDate.getFullYear();
@@ -222,11 +234,18 @@ router.post(
         return matchesYear && matchesMonth;
       });
 
+      console.log(`[REPORT] Filtered ${filteredLogs.length} logs for report generation`);
+
       // 🔹 Group filtered logs by schedule
       const grouped: Record<string, any> = {};
       for (const log of filteredLogs) {
         const schedule: any = log.schedule || {};
         const instructorObj = schedule?.instructor;
+
+        // Skip if no schedule ID
+        if (!schedule._id) {
+          continue;
+        }
 
         const instructorName = instructorObj
           ? `${instructorObj.last_name}, ${instructorObj.first_name} ${
@@ -277,7 +296,27 @@ router.post(
         if (log.status?.toLowerCase() === "late") grouped[key].late += 1;
       }
 
-      const tableData = Object.values(grouped);
+      let tableData = Object.values(grouped);
+
+      // Filter by instructor name if searchQuery is provided
+      if (searchQuery && searchQuery.trim()) {
+        const searchLower = searchQuery.toLowerCase().trim();
+        tableData = tableData.filter((row: any) => {
+          const instructorName = row.instructorName || "";
+          return instructorName.toLowerCase().includes(searchLower);
+        });
+        console.log(`[REPORT] After filtering by name "${searchQuery}": ${tableData.length} records`);
+      }
+
+      console.log(`[REPORT] Generated ${tableData.length} grouped records for report`);
+
+      if (tableData.length === 0) {
+        res.status(400).json({ 
+          success: false, 
+          message: "No attendance data found for the selected filters. Please adjust your filters and try again." 
+        });
+        return;
+      }
 
       // 🔹 Report metadata — based on selected filters
       const reportMonth = selectedMonth
@@ -294,6 +333,17 @@ router.post(
         __dirname,
         "../../templates/MonthlyReports.docx"
       );
+
+      // Check if template exists
+      if (!fs.existsSync(templatePath)) {
+        console.error(`[REPORT] Template not found at: ${templatePath}`);
+        res.status(500).json({ 
+          success: false, 
+          message: "Report template not found. Please contact administrator." 
+        });
+        return;
+      }
+
       const content = fs.readFileSync(templatePath, "binary");
       const zip = new PizZip(content);
       const doc = new Docxtemplater(zip, {
@@ -317,7 +367,12 @@ router.post(
       const outputPath = path.join(outputDir, "MonthlyDepartmentReport.docx");
 
       fs.writeFileSync(outputPath, buffer);
-      res.download(outputPath, "MonthlyDepartmentReport.docx");
+      
+      console.log(`[REPORT] Report generated successfully with ${tableData.length} records`);
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', `attachment; filename="MonthlyDepartmentReport.docx"`);
+      res.send(buffer);
     } catch (error: unknown) {
       if (error instanceof Error) {
         console.error(
@@ -500,8 +555,10 @@ router.get(
     }
 
     try {
-      // Step 1: Find the course by its code
-      const courseDoc = await Course.findOne({ code: courseCode });
+      // Step 1: Find the course by its code (case-insensitive)
+      const courseDoc = await Course.findOne({ 
+        code: { $regex: new RegExp(`^${courseCode}$`, "i") }
+      });
 
       if (!courseDoc) {
         res.status(404).json({ message: "Course not found" });
@@ -656,7 +713,10 @@ router.get("/faculty", async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    const courseDoc = await Course.findOne({ code: courseName });
+    // Case-insensitive search for course code
+    const courseDoc = await Course.findOne({ 
+      code: { $regex: new RegExp(`^${courseName}$`, "i") }
+    });
 
     if (!courseDoc) {
       res.status(404).json({ message: "Course not found" });
@@ -687,7 +747,10 @@ router.get(
     }
 
     try {
-      const course = await Course.findOne({ code: courseName });
+      // Case-insensitive search for course code
+      const course = await Course.findOne({ 
+        code: { $regex: new RegExp(`^${courseName}$`, "i") }
+      });
       if (!course) {
         res.status(404).json({ message: "Course not found" });
         return;
@@ -887,8 +950,10 @@ router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 🔎 Find the course document
-    const courseDoc = await Course.findOne({ code: courseCode });
+    // 🔎 Find the course document (case-insensitive)
+    const courseDoc = await Course.findOne({ 
+      code: { $regex: new RegExp(`^${courseCode}$`, "i") }
+    });
     if (!courseDoc) {
       res.status(400).json({ message: "Invalid course code" });
       return;
@@ -1634,7 +1699,55 @@ router.post(
           return;
         }
 
-        // Try delete by explicit dates first
+        // Find old schedules that will be deleted (before deleting them)
+        let oldSchedules: any[] = [];
+        if (startDateToUse && endDateToUse && startDateToUse !== "TBD" && endDateToUse !== "TBD") {
+          oldSchedules = await Schedule.find({
+            instructor: instructorToUse,
+            semesterStartDate: startDateToUse,
+            semesterEndDate: endDateToUse,
+          });
+        } else if (semesterLabel && ayLabel) {
+          oldSchedules = await Schedule.find({
+            instructor: instructorToUse,
+            semester: { $regex: new RegExp(semesterLabel, "i") },
+            academicYear: ayLabel,
+          });
+        } else {
+          console.warn("Replace requested but semester/date info is missing - aborting delete to avoid broad removal.");
+          res.status(400).json({ message: "Missing semester/date info for replace operation" });
+          return;
+        }
+
+        // Create a mapping from old schedule IDs to new schedule data
+        // Match by courseCode, room, startTime, endTime, and days
+        const scheduleMapping = new Map<string, any>();
+        
+        for (const oldSchedule of oldSchedules) {
+          // Find matching new schedule based on course, room, and time
+          const matchingNewSchedule = schedules.find((newSched: any) => {
+            return (
+              newSched.courseCode === oldSchedule.courseCode &&
+              newSched.room === oldSchedule.room &&
+              newSched.startTime === oldSchedule.startTime &&
+              newSched.endTime === oldSchedule.endTime &&
+              JSON.stringify(newSched.days) === JSON.stringify(oldSchedule.days)
+            );
+          });
+          
+          if (matchingNewSchedule) {
+            // We'll map this after new schedules are created
+            scheduleMapping.set(oldSchedule._id.toString(), matchingNewSchedule);
+          }
+        }
+
+        // Find all logs that reference the old schedules
+        const oldScheduleIds = oldSchedules.map(s => s._id);
+        const logsToUpdate = await Log.find({
+          schedule: { $in: oldScheduleIds }
+        });
+
+        // Delete old schedules
         if (startDateToUse && endDateToUse && startDateToUse !== "TBD" && endDateToUse !== "TBD") {
           await Schedule.deleteMany({
             instructor: instructorToUse,
@@ -1642,26 +1755,62 @@ router.post(
             semesterEndDate: endDateToUse,
           });
         } else if (semesterLabel && ayLabel) {
-          // fallback: delete by semester label + academicYear
           await Schedule.deleteMany({
             instructor: instructorToUse,
             semester: { $regex: new RegExp(semesterLabel, "i") },
             academicYear: ayLabel,
           });
-        } else {
-          // last resort: delete all schedules for the instructor (BE CAREFUL)
-          // You may want to avoid this unless you are sure. For safety we won't do broad delete automatically.
-          console.warn("Replace requested but semester/date info is missing - aborting delete to avoid broad removal.");
-          res.status(400).json({ message: "Missing semester/date info for replace operation" });
-          return;
         }
+
+        // Insert new schedules
+        const saved = await Schedule.insertMany(schedules);
+
+        // Create mapping from old schedule IDs to new schedule IDs
+        const oldToNewIdMap = new Map<string, string>();
+        
+        for (const oldSchedule of oldSchedules) {
+          const matchingNewSchedule = saved.find((newSched: any) => {
+            return (
+              newSched.courseCode === oldSchedule.courseCode &&
+              newSched.room === oldSchedule.room &&
+              newSched.startTime === oldSchedule.startTime &&
+              newSched.endTime === oldSchedule.endTime &&
+              JSON.stringify(newSched.days) === JSON.stringify(oldSchedule.days)
+            );
+          });
+          
+          if (matchingNewSchedule) {
+            oldToNewIdMap.set(oldSchedule._id.toString(), matchingNewSchedule._id.toString());
+          }
+        }
+
+        // Update logs to point to new schedules
+        for (const log of logsToUpdate) {
+          const oldScheduleId = log.schedule.toString();
+          const newScheduleId = oldToNewIdMap.get(oldScheduleId);
+          
+          if (newScheduleId) {
+            log.schedule = newScheduleId as any;
+            await log.save();
+            console.log(`[REPLACE-SCHEDULE] Updated log ${log._id} from schedule ${oldScheduleId} to ${newScheduleId}`);
+          } else {
+            console.warn(`[REPLACE-SCHEDULE] No matching new schedule found for old schedule ${oldScheduleId} in log ${log._id}`);
+          }
+        }
+
+        res.status(replace ? 200 : 201).json({
+          message: replace ? "Schedules replaced successfully" : "Schedules saved successfully",
+          data: saved,
+          logsUpdated: logsToUpdate.length,
+        });
+        return;
       }
 
-      // Insert new schedules
+      // Insert new schedules (non-replace case)
       const saved = await Schedule.insertMany(schedules);
 
-      res.status(replace ? 200 : 201).json({
-        message: replace ? "Schedules replaced successfully" : "Schedules saved successfully",
+      res.status(201).json({
+        message: "Schedules saved successfully",
         data: saved,
       });
     } catch (error) {

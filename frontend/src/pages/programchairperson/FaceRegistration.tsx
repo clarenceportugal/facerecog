@@ -35,6 +35,9 @@ import AdminMain from "./AdminMain";
 import FaceRegistrationModal from "../../components/FaceRegistrationModal";
 import axios from "axios";
 
+// Get API base URL from environment variable (Vite uses VITE_ prefix)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
 interface College {
   _id: string;
   code: string;
@@ -74,30 +77,34 @@ const FaceRegistration: React.FC = () => {
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'name' | 'status' | 'registration'>('name');
 
-  // Fetch users from same college
+  // Fetch users from same course (like FacultyInfo page does)
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      let collegeCode = localStorage.getItem("college");
+      let courseName = localStorage.getItem("course");
       
-      console.log("College code from localStorage:", collegeCode);
+      console.log("Course code from localStorage:", courseName);
       
-      // If no college code in localStorage, try to get it from current user
-      if (!collegeCode) {
+      // If no course code in localStorage, try to get it from current user
+      if (!courseName) {
         const currentUserId = localStorage.getItem("userId");
-        console.log("No college in localStorage, fetching from user ID:", currentUserId);
+        console.log("No course in localStorage, fetching from user ID:", currentUserId);
         
         if (currentUserId) {
           try {
             const userResponse = await axios.get(
-              `http://localhost:5000/api/auth/user/${currentUserId}`
+              `${API_BASE_URL}/api/auth/user/${currentUserId}`
             );
             console.log("Current user data:", userResponse.data);
             
-            if (userResponse.data.college && userResponse.data.college.code) {
-              collegeCode = userResponse.data.college.code;
-              localStorage.setItem("college", collegeCode || "");
-              console.log("Updated college code from user data:", collegeCode);
+            if (userResponse.data.course) {
+              if (typeof userResponse.data.course === "object" && userResponse.data.course.code) {
+                courseName = userResponse.data.course.code;
+              } else {
+                courseName = userResponse.data.course;
+              }
+              localStorage.setItem("course", courseName || "");
+              console.log("Updated course code from user data:", courseName);
             }
           } catch (userError) {
             console.error("Error fetching current user:", userError);
@@ -105,26 +112,40 @@ const FaceRegistration: React.FC = () => {
         }
       }
       
-      if (!collegeCode) {
-        setError("College information not found. Please log in again.");
-      return;
-    }
+      if (!courseName) {
+        setError("Course information not found. Please log in again.");
+        setLoading(false);
+        return;
+      }
 
-      console.log("Fetching users for college:", collegeCode);
+      // Normalize course code to lowercase for consistency
+      const normalizedCourseName = courseName.toLowerCase().trim();
+      console.log("Fetching faculty for course:", normalizedCourseName);
       
+      // Use the same endpoint as FacultyInfo page
       const response = await axios.get(
-        "http://localhost:5000/api/auth/college-users",
+        `${API_BASE_URL}/api/auth/faculty`,
         {
-          params: { collegeCode }
+          params: { courseName: normalizedCourseName },
+          headers: {
+            'Content-Type': 'application/json'
+          }
         }
       );
 
       console.log("API Response:", response.data);
-      console.log("Number of users found:", response.data.length);
+      console.log("Number of users found:", response.data?.length || 0);
       console.log("Response status:", response.status);
 
-      setUsers(response.data);
-      setFilteredUsers(response.data);
+      if (Array.isArray(response.data)) {
+        setUsers(response.data);
+        setFilteredUsers(response.data);
+      } else {
+        console.error("Invalid response format - expected array, got:", typeof response.data);
+        setError("Invalid data format received from server");
+        setUsers([]);
+        setFilteredUsers([]);
+      }
     } catch (error) {
       console.error("Error fetching users:", error);
       if (axios.isAxiosError(error)) {

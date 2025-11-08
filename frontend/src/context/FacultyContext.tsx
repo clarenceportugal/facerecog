@@ -9,6 +9,7 @@ import React, {
   useCallback,
 } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../utils/api";
 
 interface Faculty {
   _id: string;
@@ -46,7 +47,7 @@ export const FacultyProvider: React.FC<{ children: ReactNode }> = ({ children })
     try {
       const CourseName = localStorage.getItem("course") ?? "";
 
-      const res = await axios.get("https://eduvision-dura.onrender.com/api/auth/faculty", {
+      const res = await axios.get(`${API_BASE_URL}/api/auth/faculty`, {
         params: { courseName: CourseName },
         // axios accepts AbortSignal via `signal` (axios v1+)
         signal,

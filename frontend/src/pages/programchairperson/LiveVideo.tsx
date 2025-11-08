@@ -112,6 +112,9 @@ const LiveVideo: React.FC = () => {
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
         try {
+          // ⏱️ PROFILING: Start timing frame processing
+          const frameReceiveTime = performance.now();
+          
           const buffer = new Uint8Array(event.data);
           const metadataLen = new DataView(buffer.buffer).getUint32(0, false);
           const metadataBytes = buffer.slice(4, 4 + metadataLen);
@@ -124,7 +127,14 @@ const LiveVideo: React.FC = () => {
             const url = URL.createObjectURL(blob);
             
             if (imgRef.current) {
-              imgRef.current.onload = () => URL.revokeObjectURL(url);
+              imgRef.current.onload = () => {
+                // ⏱️ PROFILING: Log total frontend processing time
+                const totalFrontendTime = performance.now() - frameReceiveTime;
+                if (metadata.faces && metadata.faces.length > 0) {
+                  console.log(`[⏱️ FRONTEND] Frame ${metadata.frameNumber}: Frontend processing = ${totalFrontendTime.toFixed(1)}ms with ${metadata.faces.length} face(s)`);
+                }
+                URL.revokeObjectURL(url);
+              };
               imgRef.current.src = url;
             }
             
@@ -174,7 +184,36 @@ const LiveVideo: React.FC = () => {
             
             // Optimized face tracking - instant display and removal
             const now = Date.now();
-            const currentDetections = metadata.faces || [];
+            const rawDetections = metadata.faces || [];
+            
+            // Scale bounding boxes from frame resolution to displayed video size
+            const frameWidth = metadata.frame_width || 1280;  // Default to 1280 if not provided
+            const frameHeight = metadata.frame_height || 720;  // Default to 720 if not provided
+            
+            // Scale boxes to match displayed video size
+            const currentDetections = rawDetections.map((face: FaceDetection) => {
+              if (!imgRef.current) return face;
+              
+              const displayWidth = imgRef.current.naturalWidth || frameWidth;
+              const displayHeight = imgRef.current.naturalHeight || frameHeight;
+              
+              // Calculate scale factors
+              const scaleX = displayWidth / frameWidth;
+              const scaleY = displayHeight / frameHeight;
+              
+              // Scale the bounding box
+              const [x, y, w, h] = face.box;
+              return {
+                ...face,
+                box: [
+                  Math.round(x * scaleX),
+                  Math.round(y * scaleY),
+                  Math.round(w * scaleX),
+                  Math.round(h * scaleY)
+                ] as [number, number, number, number]
+              };
+            });
+            
             const currentDetectionNames = new Set(
               currentDetections.map((f: FaceDetection) => f.name || "Unknown")
             );
@@ -315,7 +354,20 @@ const LiveVideo: React.FC = () => {
         
         if (msg.error) {
           console.error(`❌ Error from ${msg.cameraId}:`, msg.error);
-          setConnectionStatus(`Error: ${msg.error}`);
+          // Show user-friendly error message
+          const errorMsg = msg.error.includes('FFmpeg is not installed') 
+            ? 'FFmpeg not found. Please install FFmpeg and add it to your system PATH.'
+            : msg.error;
+          setConnectionStatus(`Error: ${errorMsg}`);
+          return;
+        }
+        
+        if (msg.status === 'error') {
+          console.error(`❌ Error from ${msg.cameraId}:`, msg.error);
+          const errorMsg = msg.error?.includes('FFmpeg is not installed') 
+            ? 'FFmpeg not found. Please install FFmpeg and add it to your system PATH.'
+            : msg.error || 'Unknown error';
+          setConnectionStatus(`Error: ${errorMsg}`);
           return;
         }
       } catch (e) {

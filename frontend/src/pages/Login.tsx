@@ -19,6 +19,7 @@ import Swal from "sweetalert2";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import PhotoCamera from "@mui/icons-material/PhotoCamera";
+import { API_BASE_URL } from "../utils/api";
 
 
 interface College {
@@ -46,7 +47,7 @@ export default function AuthPage() {
   useEffect(() => {
     const fetchColleges = async () => {
       try {
-        const response = await axios.get("https://eduvision-dura.onrender.com/api/loginsignup/colleges");
+        const response = await axios.get(`${API_BASE_URL}/api/loginsignup/colleges`);
         setColleges(response.data);
       } catch (error) {
         console.error("Failed to fetch colleges:", error);
@@ -61,7 +62,7 @@ export default function AuthPage() {
   console.log(code)
 
   try {
-    const res = await axios.post("https://eduvision-dura.onrender.com/api/loginsignup/selected-college", {
+    const res = await axios.post(`${API_BASE_URL}/api/loginsignup/selected-college`, {
       collegeCode: code,
     });
     console.log("Programs:", res.data);
@@ -121,7 +122,7 @@ export default function AuthPage() {
 
   if (email) {
     try {
-      const res = await fetch("https://eduvision-dura.onrender.com/api/loginsignup/check-temp-account", {
+      const res = await fetch(`${API_BASE_URL}/api/loginsignup/check-temp-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -180,7 +181,7 @@ export default function AuthPage() {
         didOpen: () => Swal.showLoading(),
       });
 
-      await axios.post("https://eduvision-dura.onrender.com/api/loginsignup/send-verification-code", { email });
+      await axios.post(`${API_BASE_URL}/api/loginsignup/send-verification-code`, { email });
 
       Swal.close();
 
@@ -198,7 +199,7 @@ export default function AuthPage() {
             return false;
           }
           try {
-            const res = await axios.post("https://eduvision-dura.onrender.com/api/loginsignup/verify-code", {
+            const res = await axios.post(`${API_BASE_URL}/api/loginsignup/verify-code`, {
               email,
               code,
             });
@@ -234,7 +235,7 @@ export default function AuthPage() {
       formData.append("program", selectedProgram);
       formData.append("photo", imageFile);
 
-      const response = await axios.post("https://eduvision-dura.onrender.com/api/loginsignup/signup", formData, {
+      const response = await axios.post(`${API_BASE_URL}/api/loginsignup/signup`, formData, {
         headers: {
           "Content-Type": "multipart/form-data",
         },
@@ -301,7 +302,7 @@ export default function AuthPage() {
   setLoading(true);
   try {
     const res = await axios.post(
-      "https://eduvision-dura.onrender.com/api/loginsignup/login",
+      `${API_BASE_URL}/api/loginsignup/login`,
       credentials
     );
     const { token, user, requiresUpdate, requiresCompletion } = res.data;
