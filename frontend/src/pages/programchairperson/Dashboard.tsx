@@ -26,6 +26,7 @@ import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 dayjs.extend(customParseFormat);
 import AdminMain from "./AdminMain";
+import { API_BASE_URL } from "../../utils/api";
 
 interface Schedule {
   courseTitle: string;
@@ -75,7 +76,7 @@ const Dashboard: React.FC = () => {
     const fetchSchedules = async () => {
       try {
         const response = await axios.post(
-          "https://eduvision-dura.onrender.com/api/auth/all-schedules/today",
+          `${API_BASE_URL}/api/auth/all-schedules/today`,
           {
             shortCourseName: ShortCourseName,
           }
@@ -87,14 +88,16 @@ const Dashboard: React.FC = () => {
       }
     };
 
-    fetchSchedules();
+    if (ShortCourseName) {
+      fetchSchedules();
+    }
   }, [ShortCourseName]);
 
   useEffect(() => {
     const fetchInstructorCount = async () => {
       try {
         const response = await axios.get(
-          `https://eduvision-dura.onrender.com/api/auth/count/instructors`,
+          `${API_BASE_URL}/api/auth/count/instructors`,
           {
             params: { course: CourseName },
           }
@@ -114,7 +117,7 @@ const Dashboard: React.FC = () => {
     const fetchSchedulesCountToday = async () => {
       try {
         const response = await axios.get(
-          `https://eduvision-dura.onrender.com/api/auth/schedules-count/today`,
+          `${API_BASE_URL}/api/auth/schedules-count/today`,
           {
             params: { course: CourseName },
           }
@@ -128,7 +131,7 @@ const Dashboard: React.FC = () => {
     if (CourseName) {
       fetchSchedulesCountToday();
     }
-  }, []);
+  }, [CourseName]);
 
   useEffect(() => {
     const generateChartData = () => {
@@ -201,7 +204,7 @@ const Dashboard: React.FC = () => {
         console.log("Sending request to fetch logs for course:", CourseName);
 
         const res = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/logs/all-faculties/today",
+          `${API_BASE_URL}/api/auth/logs/all-faculties/today`,
           {
             params: {
               courseName: CourseName,
@@ -214,11 +217,14 @@ const Dashboard: React.FC = () => {
         setAllFacultiesLogs(res.data);
       } catch (error) {
         console.error("Failed to fetch logs:", error);
+        setAllFacultiesLogs([]);
       }
     };
 
-    fetchAllFacultiesLogs();
-  }, []);
+    if (CourseName) {
+      fetchAllFacultiesLogs();
+    }
+  }, [CourseName]);
 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);

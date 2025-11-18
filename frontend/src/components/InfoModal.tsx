@@ -42,6 +42,113 @@ dayjs.extend(isSameOrBefore);
 dayjs.extend(isBetween);
 import AddManualScheduleModal from "./AddManualScheduleModal";
 
+// Custom Tooltip Component for Heatmap
+const CustomHeatmapTooltip: React.FC<{ values: any[] }> = ({ values }) => {
+  const [tooltip, setTooltip] = useState<{
+    show: boolean;
+    x: number;
+    y: number;
+    content: React.ReactNode;
+  }>({ show: false, x: 0, y: 0, content: null });
+
+  useEffect(() => {
+    const handleMouseOver = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Check if the target is a rect element or inside one
+      const rect = target.tagName === 'rect' ? target : target.closest('rect');
+      if (!rect) return;
+
+      const date = rect.getAttribute('data-date');
+      if (!date) return;
+
+      const value = values.find((v) => v.date === date);
+      if (!value) return;
+
+      const formattedDate = new Date(date).toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+
+      const content = (
+        <Box sx={{ p: 1 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 0.5, color: 'white' }}>
+            {formattedDate}
+          </Typography>
+          <Typography variant="caption" sx={{ mt: 0.5, display: 'block', color: 'rgba(255,255,255,0.8)' }}>
+            {value.count} {value.count === 1 ? 'activity' : 'activities'}
+          </Typography>
+        </Box>
+      );
+
+      setTooltip({
+        show: true,
+        x: e.clientX,
+        y: e.clientY,
+        content,
+      });
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      setTooltip((prev) => {
+        if (prev.show) {
+          return { ...prev, x: e.clientX, y: e.clientY };
+        }
+        return prev;
+      });
+    };
+
+    const handleMouseOut = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const rect = target.tagName === 'rect' ? target : target.closest('rect');
+      if (rect) {
+        // Only hide if we're leaving the rect
+        const relatedTarget = (e.relatedTarget as HTMLElement);
+        if (!relatedTarget || !rect.contains(relatedTarget)) {
+          setTooltip({ show: false, x: 0, y: 0, content: null });
+        }
+      } else {
+        setTooltip({ show: false, x: 0, y: 0, content: null });
+      }
+    };
+
+    // Use event delegation on the document to catch events from dynamically rendered elements
+    document.addEventListener('mouseover', handleMouseOver);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseout', handleMouseOut);
+
+    return () => {
+      document.removeEventListener('mouseover', handleMouseOver);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseout', handleMouseOut);
+    };
+  }, [values]);
+
+  if (!tooltip.show) return null;
+
+  return (
+    <Box
+      sx={{
+        position: 'fixed',
+        left: tooltip.x + 10,
+        top: tooltip.y - 10,
+        zIndex: 9999,
+        pointerEvents: 'none',
+        bgcolor: 'rgba(0, 0, 0, 0.9)',
+        color: 'white',
+        borderRadius: 1,
+        p: 1,
+        maxWidth: 250,
+        boxShadow: 3,
+        transform: 'translateY(-100%)',
+      }}
+    >
+      {tooltip.content}
+    </Box>
+  );
+};
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -618,40 +725,40 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
               </Box>
             </Box>
 
-            {/* Faculty Activity Heatmap */}
-            {/* wrapper Box: changes size/position when maximized */}
-            <Box
-              sx={
-                isHeatmapMaximized
-                  ? {
-                      position: "fixed",
-                      top: "50%",
-                      left: "50%",
-                      transform: "translate(-50%, -50%)",
-                      zIndex: 1400,
-                      width: "90vw",
-                      height: "80vh",
-                      p: 3,
-                      borderRadius: 2,
-                      backgroundColor: "#FFF",
-                      border: "1px solid #3D1308",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 2,
-                      boxShadow: 20,
-                    }
-                  : {
-                      p: 2,
-                      border: "1px solid #3D1308",
-                      borderRadius: 2,
-                      backgroundColor: "#FFF",
-                      flexShrink: 0,
-                      height: "auto",
-                      textAlign: "center",
-                      position: "relative",
-                    }
-              }
-            >
+            {/* Faculty Activity Heatmap - Only show if schedules exist */}
+            {schedules.length > 0 ? (
+              <Box
+                sx={
+                  isHeatmapMaximized
+                    ? {
+                        position: "fixed",
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                        zIndex: 1400,
+                        width: "90vw",
+                        height: "80vh",
+                        p: 3,
+                        borderRadius: 2,
+                        backgroundColor: "#FFF",
+                        border: "1px solid #3D1308",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 2,
+                        boxShadow: 20,
+                      }
+                    : {
+                        p: 2,
+                        border: "1px solid #3D1308",
+                        borderRadius: 2,
+                        backgroundColor: "#FFF",
+                        flexShrink: 0,
+                        height: "auto",
+                        textAlign: "center",
+                        position: "relative",
+                      }
+                }
+              >
               {/* maximize / minimize button at top-right */}
               <Box
                 sx={{
@@ -697,32 +804,104 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
+                        width: "100%",
+                        minHeight: "calc(80vh - 120px)",
                       }
                     : { width: "100%" }
                 }
+                className={`heatmap-wrapper ${isHeatmapMaximized ? 'maximized' : ''}`}
               >
-                <CalendarHeatmap
-                  startDate={startDate}
-                  endDate={endDate}
-                  values={values}
-                  classForValue={(value) => {
-                    if (!value || value.count === 0) {
-                      return "color-empty";
-                    }
-                    return `color-github-${value.count}`;
+                <Box
+                  sx={{
+                    position: 'relative',
+                    width: '100%',
+                    ...(isHeatmapMaximized ? {
+                      height: '100%',
+                      minHeight: '500px',
+                    } : {}),
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    '& .react-calendar-heatmap': {
+                      width: '100%',
+                      ...(isHeatmapMaximized ? {
+                        maxWidth: 'none !important',
+                        '& svg': {
+                          width: '100% !important',
+                          height: 'auto !important',
+                          maxWidth: 'none !important',
+                        },
+                        '& .react-calendar-heatmap-week > rect': {
+                          width: '18px !important',
+                          height: '18px !important',
+                        },
+                        '& text': {
+                          fontSize: '12px !important',
+                        },
+                      } : {}),
+                    },
+                    '& .react-calendar-heatmap rect': {
+                      cursor: 'pointer',
+                      transition: 'opacity 0.2s',
+                      '&:hover': {
+                        opacity: 0.8,
+                      },
+                    },
                   }}
-                  tooltipDataAttrs={(value) => {
-                    if (value && value.date) {
-                      return {
-                        "data-tip": `${value.date}: ${value.count} activities`,
-                      } as unknown as CalendarHeatmap.TooltipDataAttrs;
-                    }
-                    return {} as CalendarHeatmap.TooltipDataAttrs;
-                  }}
-                  showWeekdayLabels
-                />
+                >
+                  {values.length > 0 ? (
+                    <>
+                      <CalendarHeatmap
+                        key={isHeatmapMaximized ? 'maximized' : 'normal'}
+                        startDate={startDate}
+                        endDate={endDate}
+                        values={values}
+                        classForValue={(value) => {
+                          if (!value || value.count === 0) {
+                            return "color-empty";
+                          }
+                          return `color-github-${value.count}`;
+                        }}
+                        tooltipDataAttrs={(value) => {
+                          if (value && value.date) {
+                            return {
+                              "data-tip": `${value.date}: ${value.count} activities`,
+                            } as unknown as CalendarHeatmap.TooltipDataAttrs;
+                          }
+                          return {} as CalendarHeatmap.TooltipDataAttrs;
+                        }}
+                        showWeekdayLabels
+                      />
+                      <CustomHeatmapTooltip values={values} />
+                    </>
+                  ) : (
+                    <Box sx={{ p: 3, textAlign: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No attendance records yet. Activity will appear here once attendance is logged.
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
               </Box>
             </Box>
+            ) : (
+              <Box
+                sx={{
+                  p: 2,
+                  border: "1px solid #3D1308",
+                  borderRadius: 2,
+                  backgroundColor: "#FFF",
+                  textAlign: "center",
+                }}
+              >
+                <Typography variant="h6" sx={{ textAlign: "center", mb: 2 }}>
+                  Faculty Activity
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  No schedule uploaded yet. Upload a schedule to view activity heatmap.
+                </Typography>
+              </Box>
+            )}
           </Box>
 
           {/* Right Column: Faculty Schedules */}

@@ -32,6 +32,7 @@ import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 dayjs.extend(customParseFormat);
 import DeanMain from "./DeanMain";
+import { API_BASE_URL } from "../../utils/api";
 
 interface Schedule {
   courseTitle: string;
@@ -104,7 +105,7 @@ const DeanDashboard: React.FC = () => {
       try {
         setLoading(true);
         const response = await axios.post(
-          "https://eduvision-dura.onrender.com/api/auth/dean/all-schedules/today",
+          `${API_BASE_URL}/api/auth/dean/all-schedules/today`,
           {
             shortCourseValue: shortCourseValue,
           }
@@ -125,7 +126,7 @@ const DeanDashboard: React.FC = () => {
     const fetchCourses = async () => {
       try {
         const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/all-courses/college",
+          `${API_BASE_URL}/api/auth/all-courses/college`,
           {
             params: { CollegeName },
           }
@@ -146,7 +147,7 @@ const DeanDashboard: React.FC = () => {
     const fetchCourses = async () => {
       try {
         const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/all-rooms/college",
+          `${API_BASE_URL}/api/auth/all-rooms/college`,
           {
             params: { CollegeName },
           }
@@ -167,7 +168,7 @@ const DeanDashboard: React.FC = () => {
     const fetchInstructorCount = async () => {
       try {
         const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/count-all/instructors",
+          `${API_BASE_URL}/api/auth/count-all/instructors`,
           {
             params: { CollegeName },
           }
@@ -250,7 +251,7 @@ const DeanDashboard: React.FC = () => {
     const fetchAllFacultiesLogs = async () => {
       try {
         const res = await axios.get(
-          "https://eduvision-dura.onrender.com/api/auth/logs/all-faculties/today",
+          `${API_BASE_URL}/api/auth/logs/all-faculties/today`,
           {
             params: {
               courseName: CourseName,
@@ -260,11 +261,14 @@ const DeanDashboard: React.FC = () => {
         setAllFacultiesLogs(res.data);
       } catch (error) {
         console.error("Failed to fetch logs:", error);
+        setAllFacultiesLogs([]);
       }
     };
 
-    fetchAllFacultiesLogs();
-  }, []);
+    if (CourseName) {
+      fetchAllFacultiesLogs();
+    }
+  }, [CourseName]);
 
   return (
     <DeanMain>

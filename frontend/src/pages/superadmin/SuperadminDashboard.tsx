@@ -26,6 +26,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import { green, grey } from "@mui/material/colors";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import axios from "axios";
+import { API_BASE_URL } from "../../utils/api";
 import { Chart } from "react-google-charts";
 import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
@@ -103,7 +104,7 @@ const SuperAdminDashboard: React.FC = () => {
     setLoadingCourses(true);
     try {
       const res = await axios.post(
-        "https://eduvision-dura.onrender.com/api/superadmin/selected-college",
+        `${API_BASE_URL}/api/superadmin/selected-college`,
         { collegeCode: code }
       );
       console.log("Courses under selected college:", res.data);
@@ -127,7 +128,7 @@ const SuperAdminDashboard: React.FC = () => {
     const fetchUserCounts = async () => {
       try {
         const res = await axios.get(
-          "https://eduvision-dura.onrender.com/api/superadmin/user-counts"
+          `${API_BASE_URL}/api/superadmin/user-counts`
         );
         setCounts(res.data);
       } catch (error) {
@@ -142,7 +143,7 @@ const SuperAdminDashboard: React.FC = () => {
     const fetchSchedules = async () => {
       try {
         const response = await axios.post(
-          "https://eduvision-dura.onrender.com/api/superadmin/all-schedules/today",
+          `${API_BASE_URL}/api/superadmin/all-schedules/today`,
           {
             shortCourseValue: shortCourseValue,
           }
@@ -162,7 +163,7 @@ const SuperAdminDashboard: React.FC = () => {
       setLoadingColleges(true);
       try {
         const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/superadmin/colleges"
+          `${API_BASE_URL}/api/superadmin/colleges`
         );
         setColleges(response.data);
       } catch (error) {
@@ -179,7 +180,7 @@ const SuperAdminDashboard: React.FC = () => {
     const fetchRooms = async () => {
       try {
         const response = await axios.get(
-          "https://eduvision-dura.onrender.com/api/superadmin/all-rooms/college",
+          `${API_BASE_URL}/api/superadmin/all-rooms/college`,
           {
             params: { CollegeName },
           }
@@ -259,7 +260,7 @@ const SuperAdminDashboard: React.FC = () => {
     const fetchAllFacultiesLogs = async () => {
       try {
         const res = await axios.get(
-          "https://eduvision-dura.onrender.com/api/superadmin/logs/all-faculties/today",
+          `${API_BASE_URL}/api/superadmin/logs/all-faculties/today`,
           {
             params: {
               courseName: CourseName,

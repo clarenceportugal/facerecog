@@ -12,7 +12,7 @@ import {
   Typography,
   Divider,
 } from "@mui/material";
-import { Dashboard, CalendarToday } from "@mui/icons-material";
+import { Dashboard, CalendarToday, Assessment } from "@mui/icons-material";
 import AdminHeader from "../../components/AdminHeader";
 
 const drawerWidth = 260;
@@ -25,6 +25,7 @@ const UserMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const menuItems = [
     { text: "Dashboard", icon: <Dashboard />, path: "/faculty-dashboard/:id" },
     { text: "Schedule", icon: <CalendarToday />, path: "/user-schedule/:id" },
+    { text: "Attendance", icon: <Assessment />, path: "/faculty-attendance/:id" },
   ];
 
   const handleNavigate = (path: string) => {

@@ -18,6 +18,7 @@ import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 dayjs.extend(customParseFormat);
 import UserMain from "./UserMain";
+import { API_BASE_URL } from "../../utils/api";
 
 interface Schedule {
   startTime: string;
@@ -44,7 +45,7 @@ const FacultyDashboard: React.FC = () => {
         if (!facultyId) return;
         
         const res = await axios.get(
-          `http://localhost:5000/api/auth/logs/all/today/${facultyId}`
+          `${API_BASE_URL}/api/auth/logs/all/today/${facultyId}`
         );
         setLogs(res.data);
       } catch (error) {
@@ -62,7 +63,7 @@ const FacultyDashboard: React.FC = () => {
         if (!facultyId) return;
 
         const response = await axios.get(
-          `http://localhost:5000/api/auth/expected-hours/today/${facultyId}`
+          `${API_BASE_URL}/api/auth/expected-hours/today/${facultyId}`
         );
 
         const {
@@ -92,7 +93,7 @@ const FacultyDashboard: React.FC = () => {
         if (!facultyId) return;
         
         const response = await axios.get(
-          `http://localhost:5000/api/auth/next-schedule/${facultyId}`
+          `${API_BASE_URL}/api/auth/next-schedule/${facultyId}`
         );
         setNextSchedule(response.data);
       } catch (error) {
@@ -157,7 +158,7 @@ const FacultyDashboard: React.FC = () => {
         console.log("Fetching today's schedules for facultyId:", facultyId);
 
         const response = await axios.get(
-          `http://localhost:5000/api/auth/schedules/today/${facultyId}`
+          `${API_BASE_URL}/api/auth/schedules/today/${facultyId}`
         );
 
         console.log("Raw API response:", response);
@@ -189,7 +190,7 @@ const FacultyDashboard: React.FC = () => {
         if (!facultyId) return;
         
         const res = await axios.get(
-          `http://localhost:5000/api/auth/logs/today/${facultyId}`
+          `${API_BASE_URL}/api/auth/logs/today/${facultyId}`
         );
         setToday(res.data.totalTodayHours || 0);
         setWeek(res.data.totalWeekHours || 0);

@@ -26,6 +26,7 @@ import TimeBreakdown from "./pages/programchairperson/TimeBreakdown";
 import UpdateCredentials from "./pages/user/UpdateCredentials";
 import FacultyDashboard from "./pages/user/FacultyDashboard";
 import FacultySchedule from "./pages/user/FacultySchedule";
+import FacultyAttendance from "./pages/user/FacultyAttendance";
 import { FacultyProvider } from "./context/FacultyContext";
 {
   /* for superadmin*/
@@ -209,6 +210,15 @@ export default function App() {
           }
         />
 
+        <Route
+          path="/faculty-attendance/:id"
+          element={
+            <UserMain>
+              <FacultyAttendance />
+            </UserMain>
+          }
+        />
+
         {/* Programchairperson Routes */}
         <Route
           path="/dashboard/:id"
@@ -274,6 +284,7 @@ export default function App() {
             </AdminMain>
           }
         />
+
 
         <Route
           path="/camera-test"

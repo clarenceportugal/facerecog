@@ -583,6 +583,7 @@ router.get(
 router.get("/schedules-count/today", async (req: Request, res: Response) => {
   try {
     const today = new Date();
+    const course = req.query.course as string | undefined;
 
     const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
     const dayOfWeek = days[today.getDay()];
@@ -592,11 +593,28 @@ router.get("/schedules-count/today", async (req: Request, res: Response) => {
     const dd = String(today.getDate()).padStart(2, "0");
     const todayStr = `${yyyy}-${mm}-${dd}`;
 
-    const count = await Schedule.countDocuments({
+    // Build query
+    const query: any = {
       [`days.${dayOfWeek}`]: true,
       semesterStartDate: { $lte: todayStr },
       semesterEndDate: { $gte: todayStr },
-    });
+    };
+
+    // Filter by course if provided
+    if (course) {
+      // Find the course document to get the course code
+      const courseDoc = await Course.findOne({
+        code: { $regex: new RegExp(`^${course}$`, "i") }
+      });
+
+      if (courseDoc) {
+        // Extract short course name (e.g., "BSIT" -> "IT")
+        const shortCourseName = course.replace(/^bs/i, "").toUpperCase();
+        query.courseCode = { $regex: `^${shortCourseName}`, $options: "i" };
+      }
+    }
+
+    const count = await Schedule.countDocuments(query);
 
     res.json({ count });
   } catch (error) {
@@ -632,7 +650,11 @@ router.get(
       const scheduleIds = schedules.map((schedule) => schedule._id);
       const logs = await Log.find({
         schedule: { $in: scheduleIds }, // Match any log where the schedule is in the list of scheduleIds
-      });
+      })
+        .populate({
+          path: "schedule",
+          select: "startTime endTime courseCode courseTitle room days",
+        });
 
       // If no logs are found
       if (!logs || logs.length === 0) {

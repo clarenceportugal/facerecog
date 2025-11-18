@@ -494,39 +494,75 @@ try:
     print("[INFO] Using CPU for face detection", file=sys.stderr, flush=True)
     init_start = time.time()
     
-    # Configure CPU provider with optimizations
+    # Configure CPU provider with reduced memory usage
+    # Reduced thread counts to minimize memory allocation
     cpu_options = {
-        'intra_op_num_threads': 4,  # Use 4 threads for parallel operations
-        'inter_op_num_threads': 2,  # Use 2 threads for operations between layers
+        'intra_op_num_threads': 2,  # Reduced from 4 to minimize memory usage
+        'inter_op_num_threads': 1,  # Reduced from 2 to minimize memory usage
+        'arena_extend_strategy': 'kSameAsRequested',  # Control memory growth
     }
     
-    # Use buffalo_s (small/fast model) instead of buffalo_l (large/slow)
-    # buffalo_s is optimized for speed over accuracy
-    try:
-        app = FaceAnalysis(
-            name="buffalo_s",  # Changed from buffalo_l for much faster detection
-            providers=[('CPUExecutionProvider', cpu_options)]
-        )
-        model_name = "buffalo_s (fast)"
-    except:
-        print("[WARN] buffalo_s not found, falling back to buffalo_l", file=sys.stderr, flush=True)
-        app = FaceAnalysis(
-            name="buffalo_l", 
-            providers=[('CPUExecutionProvider', cpu_options)]
-        )
-        model_name = "buffalo_l (standard)"
+    # Try to use the smallest available model first
+    # Order: buffalo_s (smallest) -> buffalo_m (medium) -> buffalo_l (largest)
+    app = None
+    model_name = None
+    models_to_try = ["buffalo_s", "buffalo_m", "buffalo_l"]
     
-    # Ultra-low resolution for maximum speed: 256x256
+    for model in models_to_try:
+        try:
+            print(f"[INFO] Attempting to load {model}...", file=sys.stderr, flush=True)
+            app = FaceAnalysis(
+                name=model,
+                providers=[('CPUExecutionProvider', cpu_options)]
+            )
+            model_name = f"{model} (loaded)"
+            print(f"[INFO] ✅ Successfully loaded {model}", file=sys.stderr, flush=True)
+            break
+        except Exception as model_error:
+            print(f"[WARN] Failed to load {model}: {str(model_error)[:100]}", file=sys.stderr, flush=True)
+            # If it's a memory error, try with even fewer threads
+            if "allocation" in str(model_error).lower() or "memory" in str(model_error).lower():
+                print(f"[INFO] Memory issue detected, trying {model} with minimal threads...", file=sys.stderr, flush=True)
+                try:
+                    minimal_cpu_options = {
+                        'intra_op_num_threads': 1,
+                        'inter_op_num_threads': 1,
+                        'arena_extend_strategy': 'kSameAsRequested',
+                    }
+                    app = FaceAnalysis(
+                        name=model,
+                        providers=[('CPUExecutionProvider', minimal_cpu_options)]
+                    )
+                    model_name = f"{model} (minimal threads)"
+                    cpu_options = minimal_cpu_options
+                    print(f"[INFO] ✅ Successfully loaded {model} with minimal threads", file=sys.stderr, flush=True)
+                    break
+                except Exception as e2:
+                    print(f"[WARN] Still failed with minimal threads: {str(e2)[:100]}", file=sys.stderr, flush=True)
+                    continue
+            continue
+    
+    if app is None:
+        raise Exception("Failed to load any ArcFace model (buffalo_s, buffalo_m, or buffalo_l). "
+                       "This is likely due to insufficient RAM or corrupted model files. "
+                       "Try: 1) Free up memory, 2) Re-download models, or 3) Use a machine with more RAM.")
+    
+    # Ultra-low resolution for maximum speed and lower memory: 256x256
     app.prepare(ctx_id=-1, det_size=(256, 256))  # Reduced from 320x320 for even faster detection
     init_time = time.time() - init_start
     print(f"[INFO] ✅ ArcFace model loaded successfully on CPU (took {init_time:.2f}s)", file=sys.stderr, flush=True)
-    print(f"[INFO] Model: {model_name}, det_size=(256, 256) - Optimized for slow CPUs", file=sys.stderr, flush=True)
+    print(f"[INFO] Model: {model_name}, det_size=(256, 256) - Optimized for low memory", file=sys.stderr, flush=True)
     print(f"[INFO] CPU threads: intra_op={cpu_options['intra_op_num_threads']}, inter_op={cpu_options['inter_op_num_threads']}", file=sys.stderr, flush=True)
         
 except Exception as e:
     print(f"[ERROR] Failed to load ArcFace model: {e}", file=sys.stderr, flush=True)
     import traceback
     traceback.print_exc(file=sys.stderr)
+    print("\n[HELP] Troubleshooting steps:", file=sys.stderr, flush=True)
+    print("1. Free up RAM - Close other applications", file=sys.stderr, flush=True)
+    print("2. Re-download models - Delete ~/.insightface/models and restart", file=sys.stderr, flush=True)
+    print("3. Check available RAM - You need at least 4GB free for buffalo_s", file=sys.stderr, flush=True)
+    print("4. Try restarting your computer to clear memory fragmentation", file=sys.stderr, flush=True)
     sys.exit(1)
 
 # Load initial embeddings
