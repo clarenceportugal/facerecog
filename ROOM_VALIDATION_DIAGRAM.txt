@@ -1,0 +1,218 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                 ROOM & TIME VALIDATION SYSTEM                            ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 1: CORRECT ROOM & TIME (GREEN BOX)                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Faculty: John Doe
+  Schedule: CS101 in "Lab1" at 09:00-11:00
+  Current Time: 09:30
+  Camera: camera1 → CAMERA1_ROOM=Lab1
+
+  ┌─────────────────────┐
+  │   Camera 1 (Lab1)   │
+  │                     │
+  │   ┌─────────────┐   │
+  │   │ 🟢 GREEN    │   │
+  │   │  John Doe   │   │
+  │   └─────────────┘   │
+  │                     │
+  └─────────────────────┘
+
+  ✅ Time matches: 09:30 is between 09:00-11:00
+  ✅ Room matches: Camera in Lab1, Schedule says Lab1
+  
+  Result: GREEN BOX ✅
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 2: WRONG ROOM (YELLOW BOX)                                     │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Faculty: John Doe
+  Schedule: CS101 in "Lab1" at 09:00-11:00
+  Current Time: 09:30
+  Camera: camera2 → CAMERA2_ROOM=Lab2
+
+  ┌─────────────────────┐
+  │   Camera 2 (Lab2)   │
+  │                     │
+  │   ┌─────────────┐   │
+  │   │ 🟡 YELLOW   │   │
+  │   │  John Doe   │   │
+  │   └─────────────┘   │
+  │                     │
+  └─────────────────────┘
+
+  ✅ Time matches: 09:30 is between 09:00-11:00
+  ❌ Room DOESN'T match: Camera in Lab2, but Schedule says Lab1
+  
+  Result: YELLOW BOX ⚠️
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 3: NO CLASS SCHEDULED (YELLOW BOX)                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Faculty: John Doe
+  Schedule: CS101 in "Lab1" at 09:00-11:00
+  Current Time: 15:00 (3:00 PM)
+  Camera: camera1 → CAMERA1_ROOM=Lab1
+
+  ┌─────────────────────┐
+  │   Camera 1 (Lab1)   │
+  │                     │
+  │   ┌─────────────┐   │
+  │   │ 🟡 YELLOW   │   │
+  │   │  John Doe   │   │
+  │   └─────────────┘   │
+  │                     │
+  └─────────────────────┘
+
+  ❌ Time DOESN'T match: 15:00 is NOT between 09:00-11:00
+  ✅ Room matches: Camera in Lab1 (but doesn't matter if time is wrong)
+  
+  Result: YELLOW BOX ⚠️
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  CONFIGURATION FLOW                                                      ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+Step 1: Edit backend/.env
+┌────────────────────────────────────────┐
+│ CAMERA1_ROOM=Lab1                      │
+│ CAMERA2_ROOM=Lab2                      │
+└────────────────────────────────────────┘
+         │
+         ↓
+Step 2: Face Recognition Reads Config
+┌────────────────────────────────────────┐
+│ ROOM_MAPPING = {                       │
+│   "camera1": "Lab1",                   │
+│   "camera2": "Lab2"                    │
+│ }                                      │
+└────────────────────────────────────────┘
+         │
+         ↓
+Step 3: Detection + Validation
+┌────────────────────────────────────────┐
+│ 1. Detect face: "John Doe"             │
+│ 2. Get room: camera1 → "Lab1"          │
+│ 3. Get schedule: CS101 in "Lab1"       │
+│ 4. Compare: Lab1 == Lab1? YES!         │
+│ 5. Result: GREEN BOX 🟢                │
+└────────────────────────────────────────┘
+         │
+         ↓
+Step 4: Frontend Displays Color
+┌────────────────────────────────────────┐
+│ if (isValidSchedule) {                 │
+│   boxColor = "#00ff00";  // Green      │
+│ } else {                               │
+│   boxColor = "#ffff00";  // Yellow     │
+│ }                                      │
+└────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  VALIDATION LOGIC                                                        ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────┐
+│ START: Faculty Detected                │
+└────────────────────────────────────────┘
+         │
+         ↓
+┌────────────────────────────────────────┐
+│ Check: Has class scheduled NOW?        │
+│ (Check time and day)                   │
+└────────────────────────────────────────┘
+         │
+         ├─────── NO ────→ 🟡 YELLOW BOX (No class)
+         │
+         ↓ YES
+┌────────────────────────────────────────┐
+│ Get Schedule Room: e.g., "Lab1"        │
+│ Get Camera Room:   e.g., "Lab1"        │
+└────────────────────────────────────────┘
+         │
+         ↓
+┌────────────────────────────────────────┐
+│ Compare: Schedule Room == Camera Room? │
+└────────────────────────────────────────┘
+         │
+         ├─────── NO ────→ 🟡 YELLOW BOX (Wrong room)
+         │
+         ↓ YES
+┌────────────────────────────────────────┐
+│ 🟢 GREEN BOX (Correct room & time!)    │
+└────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  DECISION TABLE                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────┬─────────────┬─────────────┬─────────────────┐
+│ Time Match? │ Room Match? │ Box Color   │ Attendance Log? │
+├─────────────┼─────────────┼─────────────┼─────────────────┤
+│     ✅      │     ✅      │ 🟢 GREEN    │      ✅         │
+│     ✅      │     ❌      │ 🟡 YELLOW   │  ✅ (flagged)   │
+│     ❌      │     ✅      │ 🟡 YELLOW   │      ❌         │
+│     ❌      │     ❌      │ 🟡 YELLOW   │      ❌         │
+└─────────────┴─────────────┴─────────────┴─────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  QUICK SETUP CHECKLIST                                                   ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+[ ] 1. Open backend/.env
+[ ] 2. Add line: CAMERA1_ROOM=Lab1 (use your actual room name)
+[ ] 3. Add line: CAMERA2_ROOM=Lab2 (if you have a second camera)
+[ ] 4. Save the file
+[ ] 5. Restart face recognition: py -3.13 recognizer_arcface.py
+[ ] 6. Test with Live Video page
+[ ] 7. Verify: Green = correct room, Yellow = wrong room
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  EXAMPLE .env FILE                                                       ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+# Your existing settings
+OFFLINE_MODE=true
+MONGO_URI=mongodb+srv://...
+JWT_SECRET=your-secret
+CAMERA_ID=camera1
+
+# ⭐ ADD THESE LINES (use your actual room names!) ⭐
+CAMERA1_ROOM=Lab1
+CAMERA2_ROOM=Lab2
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  NEED HELP?                                                              ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+Read these files:
+  📖 ROOM_VALIDATION_GUIDE.md ........ Complete guide
+  ⚡ ENABLE_ROOM_VALIDATION.md ....... Quick setup
+  📊 ROOM_VALIDATION_SUMMARY.md ...... Technical details
+
+Test command:
+  cd backend
+  py -3.13 recognizer_arcface.py
+
+Watch for these logs:
+  [OK] VALID John Doe has class NOW: CS101 in room Lab1
+  [WARN] WRONG ROOM John Doe has class NOW but wrong room...
+
+
+═══════════════════════════════════════════════════════════════════════════
+ 🎉 You're all set! Just configure CAMERA1_ROOM and restart!
+═══════════════════════════════════════════════════════════════════════════
+

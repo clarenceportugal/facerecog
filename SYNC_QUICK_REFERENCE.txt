@@ -1,0 +1,82 @@
+╔══════════════════════════════════════════════════════════════════╗
+║         EDUVISION SYNC QUICK REFERENCE CARD                      ║
+╚══════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────┐
+│  SYNC DIRECTION 1: DOWNLOAD DATA FOR OFFLINE USE                 │
+│  MongoDB → SQLite                                                │
+└──────────────────────────────────────────────────────────────────┘
+
+  When: Before going offline, want latest online data
+  
+  Steps:
+    1. Set OFFLINE_MODE=false in backend/.env
+    2. Start backend: npm run dev
+    3. Run: cd backend && ./TEST_SYNC.bat
+    4. Choose: Option 1
+  
+  Or use: curl -X POST http://localhost:5000/api/system/sync-to-offline
+
+┌──────────────────────────────────────────────────────────────────┐
+│  SYNC DIRECTION 2: UPLOAD OFFLINE CHANGES TO CLOUD               │
+│  SQLite → MongoDB                                                │
+└──────────────────────────────────────────────────────────────────┘
+
+  When: After working offline, want to backup to cloud
+  
+  Steps:
+    1. Set OFFLINE_MODE=false in backend/.env
+    2. Start backend: npm run dev
+    3. Run: cd backend && ./TEST_SYNC.bat
+    4. Choose: Option 2
+  
+  Or use: curl -X POST http://localhost:5000/api/system/sync-offline-to-mongo
+
+┌──────────────────────────────────────────────────────────────────┐
+│  SYNC DIRECTION 3: ATTENDANCE LOGS ONLY                          │
+│  SQLite Logs → MongoDB                                           │
+└──────────────────────────────────────────────────────────────────┘
+
+  When: Just sync attendance records
+  
+  Steps:
+    1. Set OFFLINE_MODE=false in backend/.env
+    2. Start backend: npm run dev
+    3. Run: cd backend && ./TEST_SYNC.bat
+    4. Choose: Option 3
+  
+  Or use: curl -X POST http://localhost:5000/api/system/sync-logs-to-mongo
+
+╔══════════════════════════════════════════════════════════════════╗
+║  COMMON COMMANDS                                                 ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Check current mode:
+    curl http://localhost:5000/api/system/status
+  
+  Run interactive sync tool:
+    cd backend
+    ./TEST_SYNC.bat
+  
+  Check sync status:
+    curl http://localhost:5000/api/system/sync-status
+
+╔══════════════════════════════════════════════════════════════════╗
+║  REMEMBER                                                        ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  ✓ Must be in ONLINE mode (OFFLINE_MODE=false) to sync
+  ✓ Must have MongoDB connected
+  ✓ Stop face recognition before syncing
+  ✓ MongoDB → SQLite = Download
+  ✓ SQLite → MongoDB = Upload
+
+╔══════════════════════════════════════════════════════════════════╗
+║  FILES TO READ                                                   ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  COMPLETE_SYNC_GUIDE.md ......... Full detailed guide
+  OFFLINE_ONLINE_SYNC_GUIDE.md ... Offline/online concepts
+  QUICK_START_FIXES.md ........... Quick start guide
+  FIXES_SUMMARY_DEC2_2025.md ..... Technical details
+

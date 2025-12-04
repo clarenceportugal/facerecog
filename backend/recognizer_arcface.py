@@ -1660,7 +1660,7 @@ try:
             
             # Check if embeddings need to be reloaded (less frequently to reduce overhead)
             if frame_count % 100 == 0:  # Check every 100 frames instead of every frame
-                reload_embeddings_if_needed(app)
+            reload_embeddings_if_needed(app)
             
             # ⏱️ PROFILING: Frame read timer
             read_start = time.time()
@@ -1837,81 +1837,81 @@ try:
                 # Batch create all new sessions at once
                 for name in new_sessions_to_create:
                     schedule = batch_schedules.get(name)
-                    person_sessions[name] = PersonSession(name)
-                    person_sessions[name].schedule = schedule
-                    
-                    if schedule:
-                        person_sessions[name].is_late = schedule.get('is_late', False)
+                            person_sessions[name] = PersonSession(name)
+                            person_sessions[name].schedule = schedule
+                            
+                            if schedule:
+                                person_sessions[name].is_late = schedule.get('is_late', False)
                         # Log time in with late status (batch this if possible)
-                        success, log_type = log_time_in(
-                            name, 
-                            schedule['_id'], 
-                            "camera1",
-                            schedule.get('is_late', False)
-                        )
-                        
-                        if success:
-                            person_sessions[name].time_in_logged = True
-                            person_sessions[name].log_type = log_type
-                            
-                            status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
-                            status_text = "ON TIME" if log_type == "time in" else "LATE"
-                            
-                            events.append({
-                                "type": log_type,
-                                "name": name,
-                                "timestamp": person_sessions[name].first_seen.isoformat(),
-                                "schedule": schedule,
-                                "isLate": schedule.get('is_late', False),
-                                "status": status_text
-                            })
-                            
+                                success, log_type = log_time_in(
+                                    name, 
+                                    schedule['_id'], 
+                                    "camera1",
+                                    schedule.get('is_late', False)
+                                )
+                                
+                                if success:
+                                    person_sessions[name].time_in_logged = True
+                                    person_sessions[name].log_type = log_type
+                                    
+                                    status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
+                                    status_text = "ON TIME" if log_type == "time in" else "LATE"
+                                    
+                                    events.append({
+                                        "type": log_type,
+                                        "name": name,
+                                        "timestamp": person_sessions[name].first_seen.isoformat(),
+                                        "schedule": schedule,
+                                        "isLate": schedule.get('is_late', False),
+                                        "status": status_text
+                                    })
+                                    
                             if frame_count % 5000 == 0:  # Log much less frequently for multiple users
                                 status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
                                 print(f"[INFO] {status_emoji} {log_type.upper()} logged for {name} - {schedule.get('courseCode', 'N/A')} ({status_text})", file=sys.stderr, flush=True)
-                        
-                        events.append({
-                            "type": "first_detected",
-                            "name": name,
-                            "timestamp": person_sessions[name].first_seen.isoformat(),
-                            "has_schedule": True
-                        })
-                    else:
-                        # NO SCHEDULED CLASS - Track but don't log attendance
-                        events.append({
-                            "type": "detected_no_schedule",
-                            "name": name,
-                            "timestamp": datetime.now().isoformat(),
-                            "message": f"{name} detected (no scheduled class)"
-                        })
+                                
+                                events.append({
+                                    "type": "first_detected",
+                                    "name": name,
+                                    "timestamp": person_sessions[name].first_seen.isoformat(),
+                                    "has_schedule": True
+                                })
+                            else:
+                                # NO SCHEDULED CLASS - Track but don't log attendance
+                                events.append({
+                                    "type": "detected_no_schedule",
+                                    "name": name,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "message": f"{name} detected (no scheduled class)"
+                                })
                 
                 # Second pass: Process existing sessions (optimized for multiple users)
                 for face_idx, f, name, best_score, best_idx in recognized_faces:
                     if name in person_sessions:
                         # Existing session - Optimized for multiple users (minimal overhead)
-                        session = person_sessions[name]
-                        
+                            session = person_sessions[name]
+                            
                         # Quick presence update
-                        if not session.is_present:
-                            returned, absence_duration = session.mark_returned()
-                            if returned:
-                                events.append({
-                                    "type": "returned",
-                                    "name": name,
-                                    "absence_minutes": round(absence_duration / 60, 2),
-                                    "returned_at": datetime.now().isoformat()
-                                })
-                        else:
-                            session.update_presence()
+                            if not session.is_present:
+                                returned, absence_duration = session.mark_returned()
+                                if returned:
+                                    events.append({
+                                        "type": "returned",
+                                        "name": name,
+                                        "absence_minutes": round(absence_duration / 60, 2),
+                                        "returned_at": datetime.now().isoformat()
+                                    })
+                            else:
+                                session.update_presence()
                         
                         # Schedule re-check (only when needed, less frequently for multiple users)
-                        time_since_last_check = (datetime.now() - session.last_schedule_check).total_seconds()
-                        if time_since_last_check >= SCHEDULE_RECHECK_INTERVAL_SECONDS:
-                            try:
-                                camera_id = os.getenv("CAMERA_ID", "camera1")
-                                room_name = ROOM_MAPPING.get(camera_id, "")
-                                new_schedule = get_current_schedule(name, camera_id=camera_id, room_name=room_name)
-                                session.last_schedule_check = datetime.now()
+                                time_since_last_check = (datetime.now() - session.last_schedule_check).total_seconds()
+                                if time_since_last_check >= SCHEDULE_RECHECK_INTERVAL_SECONDS:
+                                try:
+                                    camera_id = os.getenv("CAMERA_ID", "camera1")
+                                    room_name = ROOM_MAPPING.get(camera_id, "")
+                                    new_schedule = get_current_schedule(name, camera_id=camera_id, room_name=room_name)
+                                    session.last_schedule_check = datetime.now()
                                 
                                 # If schedule changed from None to a schedule, log time in
                                 if new_schedule and not session.schedule:
@@ -1932,7 +1932,7 @@ try:
                                                 "status": status_text
                                             })
                                 elif new_schedule != session.schedule:
-                                    session.schedule = new_schedule
+                                        session.schedule = new_schedule
                                     if new_schedule:
                                         session.is_late = new_schedule.get('is_late', False)
                                     else:
@@ -1946,7 +1946,7 @@ try:
                 # Third pass: Build detections for all recognized faces (optimized batch)
                 # ⚡ FIX: Ensure face_idx matches the face object to prevent bbox mismatch
                 for face_idx, f, name, best_score, best_idx in recognized_faces:
-                    if name in person_sessions:
+                        if name in person_sessions:
                         # ⚡ VALIDATION: Ensure face_idx is valid and matches the face object
                         if face_idx < 0 or face_idx >= len(faces):
                             if frame_count % 1000 == 0:
@@ -1979,19 +1979,19 @@ try:
                                 
                                 # Ensure width and height are positive
                                 if w > 0 and h > 0:
-                                    session_dict = person_sessions[name].to_dict()
-                                    schedule = session_dict.get("schedule")
-                                    
-                                    # Determine if schedule is valid (time AND room match)
-                                    has_schedule = schedule is not None
-                                    is_valid_schedule = schedule and schedule.get("isValidSchedule", True) if schedule else False
-                                    
-                                    detections.append({
-                                            "box": [x1, y1, w, h],
-                                            "name": name,
-                                            "score": float(best_score),
-                                            "session": session_dict,
-                                            "has_schedule": has_schedule,
+                            session_dict = person_sessions[name].to_dict()
+                            schedule = session_dict.get("schedule")
+                            
+                            # Determine if schedule is valid (time AND room match)
+                            has_schedule = schedule is not None
+                            is_valid_schedule = schedule and schedule.get("isValidSchedule", True) if schedule else False
+                            
+                            detections.append({
+                                "box": [x1, y1, w, h],
+                                "name": name,
+                                "score": float(best_score),
+                                "session": session_dict,
+                                "has_schedule": has_schedule,
                                         "is_valid_schedule": is_valid_schedule
                                         })
                                 else:
