@@ -13,4 +13,14 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    exclude: [
+      '@mediapipe/camera_utils',
+      '@mediapipe/face_detection',
+      '@mediapipe/face_mesh',
+      'hls.js',
+      'whep-client'
+    ],
+    force: true, // Force re-optimization
+  },
 })

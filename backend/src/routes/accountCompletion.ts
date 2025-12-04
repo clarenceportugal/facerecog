@@ -6,8 +6,7 @@ import UserModel from "../models/User";
 import Course from "../models/Course";
 import bcrypt from "bcryptjs";
 
-
-dotenv.config();
+// dotenv is loaded by systemMode.ts, app.ts, and server.ts - no need to load again here
 const router = express.Router();
 
 

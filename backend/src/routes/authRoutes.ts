@@ -33,8 +33,19 @@ import nodemailer from "nodemailer";
 import TempAccount from "../models/TempAccount";
 import Course from "../models/Course";
 import facultyProfileUpload from "../middleware/facultyProfileUpload";
+import { 
+  UserService, 
+  CollegeService, 
+  CourseService, 
+  ScheduleService, 
+  LogService,
+  SectionService,
+  RoomService,
+  SemesterService
+} from "../services/dataService";
+import { isOfflineMode } from "../utils/systemMode";
 
-dotenv.config();
+// dotenv is loaded by systemMode.ts, app.ts, and server.ts - no need to load again here
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 
@@ -69,7 +80,8 @@ router.post(
         return;
       }
 
-      const faculty = await UserModel.findById(facultyId);
+      // Use data service (works both online and offline)
+      const faculty = await UserService.findById(facultyId);
       if (!faculty) {
         res.status(404).json({ message: "Faculty not found" });
         return;
@@ -85,8 +97,7 @@ router.post(
       }
 
       // Update existing faculty record
-      faculty.profilePhotoUrl = imageUrl;
-      await faculty.save();
+      await UserService.update(facultyId, { profilePhotoUrl: imageUrl });
 
       res.status(200).json({
         message: "Profile photo uploaded successfully",
@@ -99,6 +110,7 @@ router.post(
   }
 );
 
+// GET USER NAME - WORKS OFFLINE
 router.get("/user/name", async (req: Request, res: Response): Promise<void> => {
   const userId = req.query.name as string;
 
@@ -108,9 +120,8 @@ router.get("/user/name", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const user = await UserModel.findById(userId).select(
-      "last_name first_name middle_name"
-    );
+    // Use data service (works both online and offline)
+    const user = await UserService.findById(userId);
 
     if (!user) {
       res.status(404).json({ error: "User not found." });
@@ -128,6 +139,7 @@ router.get("/user/name", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// UPLOAD FACULTY PROFILE PHOTO - WORKS OFFLINE
 router.post(
   "/upload-faculty-profile-photo",
   facultyProfileUpload.single("image"),
@@ -141,17 +153,15 @@ router.post(
         return;
       }
 
-      // Update existing user by _id
-      const updatedUser = await UserModel.findByIdAndUpdate(
-        facultyId,
-        { profilePhotoUrl: file.path },
-        { new: true } // Return the updated document
-      );
+      // Use data service (works both online and offline)
+      const updated = await UserService.update(facultyId, { profilePhotoUrl: file.path });
 
-      if (!updatedUser) {
+      if (!updated) {
         res.status(404).json({ message: "Faculty not found" });
         return;
       }
+
+      const updatedUser = await UserService.findById(facultyId);
 
       res.status(200).json({
         message: "Contract uploaded and saved successfully",
@@ -165,50 +175,56 @@ router.post(
   }
 );
 
+// LOGS TODAY - WORKS OFFLINE
 router.get("/logs/today", async (req, res) => {
   try {
     const now = new Date();
     const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0"); // Months are zero-based
+    const month = String(now.getMonth() + 1).padStart(2, "0");
     const day = String(now.getDate()).padStart(2, "0");
-    const today = `${year}-${month}-${day}`; // Format: YYYY-MM-DD
+    const today = `${year}-${month}-${day}`;
 
-    const logs = await Log.find({ date: today })
-      .populate("schedule")
-      .populate("college");
+    // Use data service (works both online and offline)
+    const logs = await LogService.findByDate(today);
+    
+    // Enrich with schedule info
+    const enrichedLogs = await Promise.all(logs.map(async (log) => {
+      const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+      let schedule = null;
+      if (scheduleId) {
+        schedule = await ScheduleService.findById(scheduleId);
+      }
+      return { ...log, schedule };
+    }));
 
-    res.status(200).json(logs);
+    res.status(200).json(enrichedLogs);
   } catch (error) {
     console.error("Error fetching today's logs:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
+// GENERATE MONTHLY DEPARTMENT LOGS REPORT - WORKS OFFLINE
 router.post(
   "/generate-monthly-department-logs",
   async (req: Request, res: Response) => {
     try {
       const { CourseName, selectedMonth, selectedYear, searchQuery } = req.body;
 
-      // Don't filter by course field - it contains courseCode not program name
-      // Match the behavior of show-monthly-department-logs which fetches all logs
-      const query: any = {};
-      // Note: CourseName is the program (e.g., "bsit"), but log.course contains courseCode
-      // For now, fetch all logs to match the display behavior
-
       console.log(`[REPORT] Generating report for CourseName: "${CourseName}", Month: ${selectedMonth}, Year: ${selectedYear}, SearchQuery: "${searchQuery}"`);
 
-      // 🔹 Fetch all logs first
-      const logs = await Log.find(query)
-        .populate({
-          path: "schedule",
-          populate: {
-            path: "instructor",
-            select: "first_name middle_name last_name",
-          },
-        })
-        .populate("college")
-        .lean();
+      // Use data service (works both online and offline)
+      const allLogs = await LogService.findAll();
+      
+      // Enrich logs with schedule info
+      const logs = await Promise.all(allLogs.map(async (log) => {
+        const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        let schedule = null;
+        if (scheduleId) {
+          schedule = await ScheduleService.findById(scheduleId);
+        }
+        return { ...log, schedule };
+      }));
 
       console.log(`[REPORT] Fetched ${logs.length} total logs from database`);
 
@@ -393,40 +409,41 @@ router.post(
   }
 );
 
+// SHOW DAILY REPORT - WORKS OFFLINE
 router.post("/show-daily-report", async (req: Request, res: Response) => {
   try {
     const { CourseName } = req.body;
-
-    // format today's date as YYYY-MM-DD since logs.date is stored as a string
     const today = new Date().toISOString().slice(0, 10);
 
-    const query: any = { date: today }; // only logs from today
-    if (CourseName) query.course = CourseName;
-    query.college = { $ne: null }; // only logs with a college linked
+    // Use data service (works both online and offline)
+    let logs = await LogService.findByDate(today);
+    
+    // Filter by course if provided
+    if (CourseName) {
+      logs = logs.filter(log => log.course === CourseName);
+    }
 
-    const logs = await Log.find(query)
-      .populate({
-        path: "schedule",
-        populate: { path: "instructor" },
-      })
-      .populate("college")
-      .lean();
-
-    const tableData = logs.map((log) => {
-      const schedule: any = log.schedule || {};
-      const instructor = schedule?.instructor
-        ? `${schedule.instructor.first_name} ${schedule.instructor.last_name}`
+    // Enrich logs with schedule info
+    const tableData = await Promise.all(logs.map(async (log) => {
+      const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+      let schedule: any = null;
+      if (scheduleId) {
+        schedule = await ScheduleService.findById(scheduleId);
+      }
+      
+      const instructor = schedule?.instructor && typeof schedule.instructor === 'object'
+        ? `${(schedule.instructor as any).first_name} ${(schedule.instructor as any).last_name}`
         : "N/A";
 
       return {
         name: instructor,
-        courseCode: schedule.courseCode || "N/A",
-        courseTitle: schedule.courseTitle || "N/A",
+        courseCode: schedule?.courseCode || "N/A",
+        courseTitle: schedule?.courseTitle || "N/A",
         status: log.status || "N/A",
         timeInOut: `${log.timeIn || "-"} / ${log.timeout || "-"}`,
-        room: schedule.room || "N/A",
+        room: schedule?.room || "N/A",
       };
-    });
+    }));
 
     res.status(200).json({
       success: true,
@@ -441,6 +458,7 @@ router.post("/show-daily-report", async (req: Request, res: Response) => {
   }
 });
 
+// SHOW MONTHLY DEPARTMENT LOGS - WORKS OFFLINE
 router.post(
   "/show-monthly-department-logs",
   async (req: Request, res: Response) => {
@@ -448,55 +466,33 @@ router.post(
       const { CourseName } = req.body;
       console.log(`[API] 📋 Fetching logs for program/course: "${CourseName}"`);
 
-      // Don't filter by course field - it contains courseCode not program name
-      // Instead, fetch all logs and let population handle the data
-      const query: any = {};
-      // Note: CourseName is the program (e.g., "bsit"), but log.course contains courseCode
-      // For now, fetch all logs. Can add filtering later if needed.
+      // Use data service (works both online and offline)
+      const allLogs = await LogService.findAll();
+      console.log(`[API] ✅ Found ${allLogs.length} total logs`);
 
-      const logs = await Log.find(query)
-        .populate({
-          path: "schedule",
-          populate: {
-            path: "instructor",
-            select: "first_name middle_name last_name", // ✅ only return names
-          },
-        })
-        .populate("college")
-        .sort({ date: -1, timeIn: -1 }) // Sort by most recent first
-        .lean();
+      // Enrich logs with schedule and instructor info
+      const enrichedLogs = await Promise.all(allLogs.map(async (log) => {
+        const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        let schedule = null;
+        if (scheduleId) {
+          schedule = await ScheduleService.findById(scheduleId);
+        }
+        return {
+          ...log,
+          schedule: schedule
+        };
+      }));
 
-      console.log(`[API] ✅ Found ${logs.length} logs`);
-      
-      // Debug: Show detailed log structures
-      if (logs.length > 0) {
-        console.log(`[API] Sample log structure (first log):`, JSON.stringify({
-          _id: logs[0]._id,
-          course: logs[0].course,
-          date: logs[0].date,
-          timeIn: logs[0].timeIn,
-          timeout: logs[0].timeout,
-          status: logs[0].status,
-          remarks: logs[0].remarks,
-          hasSchedule: !!logs[0].schedule,
-          scheduleType: typeof logs[0].schedule,
-          scheduleId: (logs[0].schedule as any)?._id,
-          hasInstructor: !!(logs[0].schedule as any)?.instructor,
-          instructorId: (logs[0].schedule as any)?.instructor?._id,
-          instructorName: (logs[0].schedule as any)?.instructor ? 
-            `${(logs[0].schedule as any).instructor.first_name} ${(logs[0].schedule as any).instructor.last_name}` : 
-            'N/A',
-        }, null, 2));
-        
-        console.log(`[API] All log IDs:`, logs.map(l => l._id));
-      } else {
-        console.log(`[API] ⚠️ No logs found in database with query:`, query);
-      }
+      // Sort by most recent first
+      enrichedLogs.sort((a, b) => {
+        if (a.date !== b.date) return b.date.localeCompare(a.date);
+        return (b.timeIn || '').localeCompare(a.timeIn || '');
+      });
 
       res.status(200).json({
         success: true,
-        count: logs.length,
-        data: logs,
+        count: enrichedLogs.length,
+        data: enrichedLogs,
       });
     } catch (error: unknown) {
       if (error instanceof Error) {
@@ -504,15 +500,13 @@ router.post(
         res.status(500).json({ success: false, message: error.message });
       } else {
         console.error("❌ Unknown error fetching logs:", error);
-        res
-          .status(500)
-          .json({ success: false, message: "Unknown error occurred" });
+        res.status(500).json({ success: false, message: "Unknown error occurred" });
       }
     }
   }
 );
 
-// FETCH ALL FULL SCHEDULES TODAY BASED ON COURSE
+// FETCH ALL FULL SCHEDULES TODAY BASED ON COURSE - WORKS OFFLINE
 router.post(
   "/all-schedules/today",
   async (req: Request, res: Response): Promise<void> => {
@@ -527,13 +521,16 @@ router.post(
       const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
       const today = dayNames[new Date().getDay()];
 
-      const schedules = await Schedule.find({
-        courseCode: { $regex: `^${shortCourseName}`, $options: "i" },
-        [`days.${today}`]: true,
-      })
-        .populate("instructor", "first_name last_name")
-        .populate("section", "course section block")
-        .lean();
+      // Use data service (works both online and offline)
+      const allSchedules = await ScheduleService.findAll();
+      
+      // Filter by course code and today's day
+      const schedules = allSchedules.filter(s => {
+        const courseMatch = s.courseCode.toLowerCase().startsWith(shortCourseName.toLowerCase());
+        const days = s.days as { [key: string]: boolean };
+        const dayMatch = days && days[today] === true;
+        return courseMatch && dayMatch;
+      });
 
       res.status(200).json(schedules);
     } catch (error) {
@@ -543,7 +540,7 @@ router.post(
   }
 );
 
-// COUNT OF INSTRUCTORS (filtered by course)
+// COUNT OF INSTRUCTORS (filtered by course) - WORKS OFFLINE
 router.get(
   "/count/instructors",
   async (req: Request, res: Response): Promise<void> => {
@@ -555,21 +552,17 @@ router.get(
     }
 
     try {
-      // Step 1: Find the course by its code (case-insensitive)
-      const courseDoc = await Course.findOne({ 
-        code: { $regex: new RegExp(`^${courseCode}$`, "i") }
-      });
+      // Use data service (works both online and offline)
+      const courseDoc = await CourseService.findByCode(courseCode);
 
       if (!courseDoc) {
         res.status(404).json({ message: "Course not found" });
         return;
       }
 
-      // Step 2: Count instructors where course = courseDoc._id
-      const count = await UserModel.countDocuments({
-        role: "instructor",
-        course: courseDoc._id,
-      });
+      // Count instructors with this course
+      const courseId = courseDoc._id || courseDoc.id || '';
+      const count = await UserService.countByRoleAndCourse('instructor', courseId);
 
       res.json({ count });
     } catch (error) {
@@ -579,7 +572,7 @@ router.get(
   }
 );
 
-// COUNT OF SCHEDULES TODAY
+// COUNT OF SCHEDULES TODAY - WORKS OFFLINE
 router.get("/schedules-count/today", async (req: Request, res: Response) => {
   try {
     const today = new Date();
@@ -593,36 +586,33 @@ router.get("/schedules-count/today", async (req: Request, res: Response) => {
     const dd = String(today.getDate()).padStart(2, "0");
     const todayStr = `${yyyy}-${mm}-${dd}`;
 
-    // Build query
-    const query: any = {
-      [`days.${dayOfWeek}`]: true,
-      semesterStartDate: { $lte: todayStr },
-      semesterEndDate: { $gte: todayStr },
-    };
+    // Use data service (works both online and offline)
+    const allSchedules = await ScheduleService.findAll();
+    
+    // Filter schedules for today
+    let filteredSchedules = allSchedules.filter(s => {
+      const scheduleDays = s.days as { [key: string]: boolean };
+      const isToday = scheduleDays && scheduleDays[dayOfWeek] === true;
+      const inSemester = s.semesterStartDate <= todayStr && s.semesterEndDate >= todayStr;
+      return isToday && inSemester;
+    });
 
     // Filter by course if provided
     if (course) {
-      // Find the course document to get the course code
-      const courseDoc = await Course.findOne({
-        code: { $regex: new RegExp(`^${course}$`, "i") }
-      });
-
-      if (courseDoc) {
-        // Extract short course name (e.g., "BSIT" -> "IT")
-        const shortCourseName = course.replace(/^bs/i, "").toUpperCase();
-        query.courseCode = { $regex: `^${shortCourseName}`, $options: "i" };
-      }
+      const shortCourseName = course.replace(/^bs/i, "").toUpperCase();
+      filteredSchedules = filteredSchedules.filter(s => 
+        s.courseCode.toUpperCase().startsWith(shortCourseName)
+      );
     }
 
-    const count = await Schedule.countDocuments(query);
-
-    res.json({ count });
+    res.json({ count: filteredSchedules.length });
   } catch (error) {
     console.error("Error counting today's schedules:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
+// LOGS FOR FACULTY TODAY - WORKS OFFLINE
 router.get(
   "/logs/faculty-today",
   async (req: Request, res: Response): Promise<void> => {
@@ -634,38 +624,47 @@ router.get(
     }
 
     try {
-      // Step 1: Find all schedules where the instructor._id matches facultyId
-      const schedules = await Schedule.find({
-        instructor: facultyId,
-      });
+      // Use data service (works both online and offline)
+      const schedules = await ScheduleService.findByInstructor(facultyId as string);
 
       if (!schedules || schedules.length === 0) {
-        res
-          .status(404)
-          .json({ message: "No schedules found for this faculty" });
+        res.status(404).json({ message: "No schedules found for this faculty" });
         return;
       }
 
-      // Step 2: Find logs where the schedule._id matches any of the schedules found in step 1
-      const scheduleIds = schedules.map((schedule) => schedule._id);
-      const logs = await Log.find({
-        schedule: { $in: scheduleIds }, // Match any log where the schedule is in the list of scheduleIds
-      })
-        .populate({
-          path: "schedule",
-          select: "startTime endTime courseCode courseTitle room days",
-        });
+      // Get schedule IDs
+      const scheduleIds = schedules.map(s => s._id || s.id);
+      
+      // Get all logs and filter by schedule IDs
+      const allLogs = await LogService.findAll();
+      const logs = allLogs.filter(log => {
+        const logScheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        return scheduleIds.includes(logScheduleId);
+      });
 
-      // If no logs are found
       if (!logs || logs.length === 0) {
-        res
-          .status(404)
-          .json({ message: "No logs found for today for this faculty" });
+        res.status(404).json({ message: "No logs found for today for this faculty" });
         return;
       }
 
-      // Step 3: Return the logs with all the details
-      res.status(200).json(logs);
+      // Add schedule details to logs
+      const logsWithSchedule = logs.map(log => {
+        const logScheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        const schedule = schedules.find(s => (s._id || s.id) === logScheduleId);
+        return {
+          ...log,
+          schedule: schedule ? {
+            startTime: schedule.startTime,
+            endTime: schedule.endTime,
+            courseCode: schedule.courseCode,
+            courseTitle: schedule.courseTitle,
+            room: schedule.room,
+            days: schedule.days
+          } : null
+        };
+      });
+
+      res.status(200).json(logsWithSchedule);
     } catch (error) {
       console.error("Error fetching logs:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -673,6 +672,7 @@ router.get(
   }
 );
 
+// LOGS FOR ALL FACULTIES TODAY - WORKS OFFLINE
 router.get(
   "/logs/all-faculties/today",
   async (req: Request, res: Response): Promise<void> => {
@@ -685,37 +685,39 @@ router.get(
 
     try {
       const now = new Date();
-      const todayStr = now.toLocaleDateString("en-CA");
+      const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD format
 
-      const logsToday = await Log.find({
-        date: todayStr,
-        course: courseName,
-      })
-        .select("timeIn timeout schedule")
-        .populate({
-          path: "schedule",
-          select: "instructor",
-          populate: {
-            path: "instructor",
-            select: "first_name last_name",
-          },
-        });
+      // Use data service (works both online and offline)
+      const todayLogs = await LogService.findByDate(todayStr);
+      
+      // Filter by course name
+      const filteredLogs = todayLogs.filter(log => log.course === courseName);
 
-      if (!logsToday || logsToday.length === 0) {
+      if (filteredLogs.length === 0) {
         res.status(404).json({ message: "No logs found for today" });
         return;
       }
 
-      const logsWithInstructor = logsToday.map((log: any) => {
-        const { first_name, last_name } = log.schedule?.instructor || {};
-        const fullName = `${first_name} ${last_name}`.trim();
+      // Get instructor info for each log
+      const logsWithInstructor = await Promise.all(filteredLogs.map(async (log) => {
+        let instructorName = "Instructor name not found";
+        
+        // Get schedule to find instructor
+        const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        if (scheduleId) {
+          const schedule = await ScheduleService.findById(scheduleId);
+          if (schedule && typeof schedule.instructor === 'object') {
+            const instructor = schedule.instructor as any;
+            instructorName = `${instructor.first_name || ''} ${instructor.last_name || ''}`.trim();
+          }
+        }
 
         return {
           timeIn: log.timeIn,
           timeout: log.timeout,
-          instructorName: fullName || "Instructor name not found",
+          instructorName: instructorName,
         };
-      });
+      }));
 
       res.status(200).json(logsWithInstructor);
     } catch (error) {
@@ -725,9 +727,10 @@ router.get(
   }
 );
 
-// GET FACULTY LIST
+// GET FACULTY LIST - WORKS OFFLINE
 router.get("/faculty", async (req: Request, res: Response): Promise<void> => {
   const { courseName } = req.query;
+  console.log(`[GET FACULTY ROUTE] Received request for courseName: ${courseName}`);
 
   if (!courseName) {
     res.status(400).json({ message: "courseName is missing" });
@@ -735,24 +738,24 @@ router.get("/faculty", async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    // Case-insensitive search for course code
-    const courseDoc = await Course.findOne({ 
-      code: { $regex: new RegExp(`^${courseName}$`, "i") }
-    });
+    // Use data service (works both online and offline)
+    const courseDoc = await CourseService.findByCode(courseName as string);
 
     if (!courseDoc) {
+      console.log(`[GET FACULTY ROUTE] Course not found: ${courseName}`);
       res.status(404).json({ message: "Course not found" });
       return;
     }
 
-    const facultyList = await UserModel.find({
-      role: "instructor",
-      course: courseDoc._id,
-    });
+    const courseId = courseDoc._id || courseDoc.id || '';
+    console.log(`[GET FACULTY ROUTE] Found course ${courseName} with ID: ${courseId}`);
+    
+    const facultyList = await UserService.findByCourse(courseId);
+    console.log(`[GET FACULTY ROUTE] Returning ${facultyList.length} faculty members`);
 
     res.json(facultyList);
   } catch (error) {
-    console.error("Error fetching faculty by course:", error);
+    console.error("[GET FACULTY ROUTE] Error fetching faculty by course:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -881,29 +884,41 @@ router.put(
   }
 );
 
-// DELETE FACULTY ACCOUNT
+// DELETE FACULTY ACCOUNT - WORKS OFFLINE
 router.delete(
   "/faculty/:id",
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
+      console.log(`[DELETE FACULTY ROUTE] Received delete request for ID: ${id}`);
 
-      const faculty = await UserModel.findById(id);
+      // Use data service (works both online and offline)
+      const faculty = await UserService.findById(id);
       if (!faculty) {
-        res.status(404).json({ message: "UserModel not found" });
+        console.log(`[DELETE FACULTY ROUTE] Faculty not found: ${id}`);
+        res.status(404).json({ message: "Faculty not found" });
         return;
       }
 
-      await UserModel.findByIdAndDelete(id);
-      res.json({ message: "UserModel account deleted successfully" });
+      console.log(`[DELETE FACULTY ROUTE] Found faculty: ${faculty.first_name} ${faculty.last_name}`);
+
+      const deleted = await UserService.delete(id);
+      if (!deleted) {
+        console.log(`[DELETE FACULTY ROUTE] Delete operation failed for: ${id}`);
+        res.status(500).json({ message: "Failed to delete faculty" });
+        return;
+      }
+
+      console.log(`[DELETE FACULTY ROUTE] Successfully deleted faculty: ${id}`);
+      res.json({ message: "Faculty account deleted successfully" });
     } catch (error) {
-      console.error(error);
+      console.error('[DELETE FACULTY ROUTE] Error:', error);
       res.status(500).json({ message: "Server error" });
     }
   }
 );
 
-// CREATE NEW FACULTY ACCOUNT
+// CREATE NEW FACULTY ACCOUNT - WORKS OFFLINE
 router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
   console.log(req.body);
   try {
@@ -917,7 +932,7 @@ router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
       password,
       role,
       college: collegeCode,
-      course: courseCode, // 👈 coming from req.body
+      course: courseCode,
       highestEducationalAttainment,
       academicRank,
       statusOfAppointment,
@@ -953,49 +968,46 @@ router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const existingUser = await UserModel.findOne({ email });
+    // Use data service (works both online and offline)
+    const existingUser = await UserService.findByEmail(email);
     if (existingUser) {
       res.status(400).json({ message: "Email already exists" });
       return;
     }
 
-    const existingUserUsername = await UserModel.findOne({ username });
+    const existingUserUsername = await UserService.findByUsername(username);
     if (existingUserUsername) {
       res.status(400).json({ message: "Username already exists" });
       return;
     }
 
-    // 🔎 Find the college document
-    const collegeDoc = await CollegeModel.findOne({ code: collegeCode });
+    // Find the college document
+    const collegeDoc = await CollegeService.findByCode(collegeCode);
     if (!collegeDoc) {
       res.status(400).json({ message: "Invalid college code" });
       return;
     }
 
-    // 🔎 Find the course document (case-insensitive)
-    const courseDoc = await Course.findOne({ 
-      code: { $regex: new RegExp(`^${courseCode}$`, "i") }
-    });
+    // Find the course document
+    const courseDoc = await CourseService.findByCode(courseCode);
     if (!courseDoc) {
       res.status(400).json({ message: "Invalid course code" });
       return;
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const newUser = new UserModel({
+    // Create new user
+    const newUser = await UserService.create({
       last_name,
       first_name,
       middle_name: middle_name || "",
       ext_name: ext_name || "",
       username,
       email,
-      password: hashedPassword,
+      password, // Will be hashed by UserService.create
       role,
       status: "forverification",
-      college: collegeDoc._id,
-      course: courseDoc._id, // 👈 Save as ObjectId
+      college: collegeDoc._id || collegeDoc.id || '',
+      course: courseDoc._id || courseDoc.id || '',
       highestEducationalAttainment,
       academicRank,
       statusOfAppointment,
@@ -1003,13 +1015,13 @@ router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
       totalTeachingLoad,
     });
 
-    await newUser.save();
-
-    const mailOptions = {
-      from: "Eduvision Team",
-      to: newUser.email,
-      subject: "Welcome to EduVision!",
-      text: `Hello ${newUser.first_name},
+    // Send welcome email (only in online mode)
+    if (!isOfflineMode()) {
+      const mailOptions = {
+        from: "Eduvision Team",
+        to: newUser.email,
+        subject: "Welcome to EduVision!",
+        text: `Hello ${newUser.first_name},
 
 Your faculty account has been created successfully.
 
@@ -1020,15 +1032,18 @@ Please login and change your password immediately.
 
 Thank you,
 EduVision Team`,
-    };
+      };
 
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-        console.error("Error sending email:", error);
-      } else {
-        console.log("Email sent:", info.response);
-      }
-    });
+      transporter.sendMail(mailOptions, (error, info) => {
+        if (error) {
+          console.error("Error sending email:", error);
+        } else {
+          console.log("Email sent:", info.response);
+        }
+      });
+    } else {
+      console.log('[OFFLINE MODE] Email sending skipped - user created successfully');
+    }
 
     res.status(201).json({
       _id: newUser._id,
@@ -1054,14 +1069,19 @@ EduVision Team`,
   }
 });
 
+// GET INSTRUCTORS - WORKS OFFLINE
 router.get(
   "/instructors",
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const instructors = await UserModel.find({ role: "instructor" }).select(
-        "first_name middle_name last_name"
-      );
-      res.json(instructors);
+      // Use data service (works both online and offline)
+      const instructors = await UserService.findByRole('instructor');
+      res.json(instructors.map(i => ({
+        _id: i._id || i.id,
+        first_name: i.first_name,
+        middle_name: i.middle_name,
+        last_name: i.last_name
+      })));
     } catch (error) {
       console.error(error);
       res.status(500).json({ message: "Error fetching instructors" });
@@ -1069,7 +1089,7 @@ router.get(
   }
 );
 
-// GET SCHEDULES ROUTE
+// GET SCHEDULES ROUTE - WORKS OFFLINE
 router.get("/schedules", async (req: Request, res: Response): Promise<void> => {
   const { shortCourseName } = req.query;
 
@@ -1079,10 +1099,12 @@ router.get("/schedules", async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    const regex = new RegExp(`^${shortCourseName}`, "i");
-    const schedules = await Schedule.find({
-      courseCode: { $regex: regex },
-    }).populate("instructor");
+    // Use data service (works both online and offline)
+    const allSchedules = await ScheduleService.findAll();
+    const coursePrefix = (shortCourseName as string).toLowerCase();
+    const schedules = allSchedules.filter(s => 
+      s.courseCode.toLowerCase().startsWith(coursePrefix)
+    );
 
     res.json(schedules);
   } catch (error) {
@@ -1091,6 +1113,7 @@ router.get("/schedules", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// GET FACULTY SCHEDULES - WORKS OFFLINE
 router.get(
   "/schedules-faculty",
   async (req: Request, res: Response): Promise<void> => {
@@ -1102,17 +1125,12 @@ router.get(
     }
 
     try {
-      if (!mongoose.Types.ObjectId.isValid(facultyId as string)) {
-        res.status(400).json({ message: "Invalid facultyId format" });
-        return;
-      }
+      // Use data service (works both online and offline)
+      let schedules = await ScheduleService.findByInstructor(facultyId as string);
 
-      const filter: any = { instructor: facultyId };
-
+      // Filter by semester if provided
       if (semester && typeof semester === "string" && semester.trim() !== "") {
         const semStr = semester.trim();
-
-        // Works without named groups
         const semMatch = semStr.match(
           /^([\d]{1,2}(?:st|nd|rd|th)\s+Semester|1st\s+Semester|2nd\s+Semester)?\s*,?\s*(?:AY\s*)?(\d{4}-\d{4})$/i
         );
@@ -1128,74 +1146,33 @@ router.get(
           }
 
           const ayParts = academicYear.split("-");
-          let computedStartISO: string | null = null;
-          let computedEndISO: string | null = null;
+          let computedStartDate: string | null = null;
+          let computedEndDate: string | null = null;
 
           if (ayParts.length === 2) {
             const startYear = parseInt(ayParts[0], 10);
             const endYear = parseInt(ayParts[1], 10);
 
             if (/^1/i.test(semesterName)) {
-              computedStartISO = `${startYear}-08-01T00:00:00.000Z`;
-              computedEndISO = `${startYear}-12-31T23:59:59.999Z`;
+              computedStartDate = `${startYear}-08-01`;
+              computedEndDate = `${startYear}-12-31`;
             } else if (/^2/i.test(semesterName)) {
-              computedStartISO = `${endYear}-01-01T00:00:00.000Z`;
-              computedEndISO = `${endYear}-05-31T23:59:59.999Z`;
+              computedStartDate = `${endYear}-01-01`;
+              computedEndDate = `${endYear}-05-31`;
             }
           }
 
-          const semesterClauses: any[] = [];
-
-          if (semesterName && academicYear) {
-            semesterClauses.push({
-              semester: { $regex: new RegExp(`^${semesterName}`, "i") },
-              academicYear: academicYear,
+          // Filter schedules based on semester dates
+          if (computedStartDate && computedEndDate) {
+            schedules = schedules.filter(s => {
+              const startDate = s.semesterStartDate;
+              const endDate = s.semesterEndDate;
+              // Check if schedule overlaps with semester period
+              return (startDate <= computedEndDate && endDate >= computedStartDate);
             });
           }
-
-          if (computedStartISO && computedEndISO) {
-            semesterClauses.push({
-              $or: [
-                {
-                  semesterStartDate: {
-                    $lte: computedEndISO,
-                    $gte: computedStartISO,
-                  },
-                },
-                {
-                  semesterEndDate: {
-                    $lte: computedEndISO,
-                    $gte: computedStartISO,
-                  },
-                },
-                {
-                  $and: [
-                    { semesterStartDate: { $lte: computedStartISO } },
-                    { semesterEndDate: { $gte: computedEndISO } },
-                  ],
-                },
-              ],
-            });
-          }
-
-          if (semesterClauses.length > 0) {
-            filter.$and = filter.$and || [];
-            filter.$and.push({ $or: semesterClauses });
-          } else {
-            console.warn("Could not parse semester query:", semStr);
-          }
-        } else {
-          filter.$and = filter.$and || [];
-          filter.$and.push({
-            semester: { $regex: new RegExp(semester.trim(), "i") },
-          });
         }
       }
-
-      const schedules = await Schedule.find(filter).populate({
-        path: "section",
-        select: "course section block",
-      });
 
       res.json(schedules);
     } catch (error) {
@@ -1205,8 +1182,46 @@ router.get(
   }
 );
 
+// DELETE SCHEDULE - WORKS OFFLINE
+router.delete("/schedules/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    console.log(`[DELETE SCHEDULE] Received delete request for schedule ID: ${id}`);
+    
+    // Check if schedule exists
+    const schedule = await ScheduleService.findById(id);
+    if (!schedule) {
+      console.log(`[DELETE SCHEDULE] Schedule not found: ${id}`);
+      res.status(404).json({ message: "Schedule not found" });
+      return;
+    }
+    
+    console.log(`[DELETE SCHEDULE] Found schedule: ${schedule.courseCode} - ${schedule.courseTitle}`);
+    
+    // Delete using data service (works both online and offline)
+    const deleted = await ScheduleService.delete(id);
+    
+    if (!deleted) {
+      console.log(`[DELETE SCHEDULE] Delete operation failed for: ${id}`);
+      res.status(500).json({ message: "Failed to delete schedule" });
+      return;
+    }
+    
+    console.log(`[DELETE SCHEDULE] Successfully deleted schedule: ${id}`);
+    res.json({ 
+      success: true,
+      message: "Schedule deleted successfully" 
+    });
+  } catch (error) {
+    console.error('[DELETE SCHEDULE] Error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
+});
 
-// ADD NEW SCHEDULE ROUTE
+// ADD NEW SCHEDULE ROUTE - WORKS OFFLINE
 router.post(
   "/add-schedules",
   async (req: Request, res: Response): Promise<void> => {
@@ -1262,7 +1277,8 @@ router.post(
         return `${year}-${month}-${day}`;
       };
 
-      const newSchedule = new Schedule({
+      // Use data service (works both online and offline)
+      const newSchedule = await ScheduleService.create({
         courseTitle,
         courseCode,
         instructor,
@@ -1274,8 +1290,6 @@ router.post(
         semesterEndDate: formatDate(semesterEndDate),
         section,
       });
-
-      await newSchedule.save();
 
       res.status(201).json({
         message: "Schedule created successfully.",
@@ -1289,40 +1303,50 @@ router.post(
 );
 
 
-// GET SUBJECTS LIST
+// GET SUBJECTS LIST - WORKS OFFLINE
 router.get("/subjects", async (req: Request, res: Response): Promise<void> => {
   try {
-    const subjects = await Subject.find().select("courseCode courseTitle");
-    res.json(subjects);
+    // Use data service (works both online and offline)
+    const schedules = await ScheduleService.findAll();
+    // Extract unique subjects from schedules
+    const subjectsMap = new Map();
+    schedules.forEach(s => {
+      if (!subjectsMap.has(s.courseCode)) {
+        subjectsMap.set(s.courseCode, { courseCode: s.courseCode, courseTitle: s.courseTitle });
+      }
+    });
+    res.json(Array.from(subjectsMap.values()));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Error fetching subjects" });
   }
 });
 
-// GET ROOMS LIST
+// GET ROOMS LIST - WORKS OFFLINE
 router.get("/rooms", async (req: Request, res: Response): Promise<void> => {
   try {
-    const rooms = await Room.find().select("name");
-    res.json(rooms);
+    // Use data service (works both online and offline)
+    const rooms = await RoomService.findAll();
+    res.json(rooms.map(r => ({ _id: r._id || r.id, name: r.name })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Error fetching rooms" });
   }
 });
 
-// GET SECTIONS LIST
+// GET SECTIONS LIST - WORKS OFFLINE
 router.get("/sections", async (req: Request, res: Response): Promise<void> => {
   try {
-    const sections = await Section.find().select("course section block");
-    res.json(sections);
+    // Use data service (works both online and offline)
+    const sections = await SectionService.findAll();
+    res.json(sections.map(s => ({ _id: s._id || s.id, course: s.course, section: s.section, block: s.block })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Error fetching sections" });
   }
 });
 
-// Get users by college code
+// Get users by college code - WORKS OFFLINE
 router.get(
   "/college-users",
   async (req: Request, res: Response): Promise<void> => {
@@ -1334,21 +1358,15 @@ router.get(
         return;
       }
 
-      // Find the college by code
-      const college = await CollegeModel.findOne({ code: collegeCode });
+      // Use data service (works both online and offline)
+      const college = await CollegeService.findByCode(collegeCode as string);
       if (!college) {
         res.status(404).json({ message: "College not found" });
         return;
       }
 
-      // Find all users in this college
-      const users = await UserModel.find({ college: college._id })
-        .populate("college", "code name")
-        .populate("course", "code name")
-        .select(
-          "first_name middle_name last_name username email role status college course faceImagePath"
-        )
-        .exec();
+      const collegeId = college._id || college.id || '';
+      const users = await UserService.findByCollege(collegeId);
 
       res.json(users);
     } catch (error) {
@@ -1358,7 +1376,7 @@ router.get(
   }
 );
 
-// Get user by ID
+// Get user by ID - WORKS OFFLINE
 router.get(
   "/user/:userId",
   async (req: Request, res: Response): Promise<void> => {
@@ -1370,13 +1388,8 @@ router.get(
         return;
       }
 
-      const user = await UserModel.findById(userId)
-        .populate("college", "code name")
-        .populate("course", "code name")
-        .select(
-          "first_name middle_name last_name username email role status college course faceImagePath"
-        )
-        .exec();
+      // Use data service (works both online and offline)
+      const user = await UserService.findById(userId);
 
       if (!user) {
         res.status(404).json({ message: "User not found" });
@@ -1391,9 +1404,11 @@ router.get(
   }
 );
 
+// GET ALL SEMESTERS - WORKS OFFLINE
 router.get("/all-semesters", async (req: Request, res: Response) => {
   try {
-    const semesters = await Semester.find().sort({ startDate: 1 }); // sort by startDate ascending
+    // Use data service (works both online and offline)
+    const semesters = await SemesterService.findAll();
     res.status(200).json({
       success: true,
       count: semesters.length,
@@ -1404,6 +1419,53 @@ router.get("/all-semesters", async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: "Internal server error",
+    });
+  }
+});
+
+// CREATE NEW SEMESTER - WORKS OFFLINE
+router.post("/add-semester", async (req: Request, res: Response) => {
+  try {
+    const { semesterName, academicYear, startDate, endDate, isActive } = req.body;
+    
+    if (!semesterName || !academicYear) {
+      res.status(400).json({
+        success: false,
+        message: "Semester name and academic year are required",
+      });
+      return;
+    }
+    
+    // Use data service (works both online and offline)
+    const newSemester = await SemesterService.create({
+      semesterName,
+      academicYear,
+      startDate,
+      endDate,
+      isActive: isActive || false,
+    });
+    
+    console.log(`[SEMESTER] Created semester: ${semesterName} ${academicYear} - Mode: ${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}`);
+    
+    res.status(201).json({
+      success: true,
+      message: "Semester created successfully",
+      data: newSemester,
+    });
+  } catch (error: any) {
+    console.error("Error creating semester:", error);
+    // Handle duplicate academic year error
+    if (error.message?.includes('UNIQUE constraint failed') || error.code === 11000) {
+      res.status(409).json({
+        success: false,
+        message: "A semester with this academic year already exists",
+      });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
     });
   }
 });
@@ -1820,6 +1882,14 @@ router.post(
           }
         }
 
+        // Auto-sync all schedules to local database
+        try {
+          const { saveSchedulesBatchToLocalDB } = require("../utils/syncToLocalDB");
+          await saveSchedulesBatchToLocalDB(saved);
+        } catch (syncError) {
+          console.warn("[LOCAL DB] Failed to auto-sync schedules to local DB:", syncError);
+        }
+
         res.status(replace ? 200 : 201).json({
           message: replace ? "Schedules replaced successfully" : "Schedules saved successfully",
           data: saved,
@@ -1830,6 +1900,14 @@ router.post(
 
       // Insert new schedules (non-replace case)
       const saved = await Schedule.insertMany(schedules);
+
+      // Auto-sync all schedules to local database
+      try {
+        const { saveSchedulesBatchToLocalDB } = require("../utils/syncToLocalDB");
+        await saveSchedulesBatchToLocalDB(saved);
+      } catch (syncError) {
+        console.warn("[LOCAL DB] Failed to auto-sync schedules to local DB:", syncError);
+      }
 
       res.status(201).json({
         message: "Schedules saved successfully",

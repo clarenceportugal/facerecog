@@ -8,9 +8,10 @@ import TempAccount from "../models/TempAccount";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import facultyProfileUpload from "../middleware/facultyProfileUpload";
+import { UserService, CollegeService, CourseService } from "../services/dataService";
+import { isOfflineMode } from "../utils/systemMode";
 
-
-dotenv.config();
+// dotenv is loaded by systemMode.ts, app.ts, and server.ts - no need to load again here
 const router = express.Router();
 
 
@@ -222,18 +223,11 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
   try {
     const { usernameOrEmail, password } = req.body;
 
-    const user = await UserModel.findOne({
-      $or: [{ username: usernameOrEmail }, { email: usernameOrEmail }],
-    })
-    .populate({
-      path: "college",
-      select: "code",
-    })
-    .populate({
-      path: "course",
-      select: "code",
-    });
-
+    // Try to find user (works in both online and offline mode)
+    let user = await UserService.findByUsername(usernameOrEmail);
+    if (!user) {
+      user = await UserService.findByEmail(usernameOrEmail);
+    }
 
     if (user) {
       const isMatch = await bcrypt.compare(password, user.password);
@@ -242,8 +236,21 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
+      // Get college and course codes
+      let collegeCode = null;
+      let courseCode = null;
+      
+      if (user.college) {
+        const college = await CollegeService.findById(user.college);
+        collegeCode = college?.code || null;
+      }
+      if (user.course) {
+        const course = await CourseService.findById(user.course);
+        courseCode = course?.code || null;
+      }
+
       const token = jwt.sign(
-        { id: user._id, role: user.role },
+        { id: user._id || user.id, role: user.role },
         process.env.JWT_SECRET as string,
         { expiresIn: "1h" }
       );
@@ -251,67 +258,74 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
       res.json({
         token,
         user: {
-          id: user._id,
+          id: user._id || user.id,
           role: user.role,
           first_name: user.first_name,
           middle_name: user.middle_name,
           last_name: user.last_name,
           status: user.status,
-          college: user.college && 'code' in user.college ? user.college.code : null,
-          course: user.course && 'code' in user.course ? user.course.code : null,
+          college: collegeCode,
+          course: courseCode,
         },
         requiresUpdate: user.status === "forverification",
+        mode: isOfflineMode() ? 'offline' : 'online'
       });
       return;
     }
 
-    const tempAcc = await TempAccount.findOne({ email: usernameOrEmail });
+    // TempAccount login (only works online - requires MongoDB)
+    if (!isOfflineMode()) {
+      const tempAcc = await TempAccount.findOne({ email: usernameOrEmail });
 
-    if (
-      !tempAcc ||
-      !tempAcc.tempPassword ||
-      tempAcc.signUpStatus !== "accepted_needs_completion"
-    ) {
-      res.status(401).json({ message: "Invalid credentials" });
+      if (
+        !tempAcc ||
+        !tempAcc.tempPassword ||
+        tempAcc.signUpStatus !== "accepted_needs_completion"
+      ) {
+        res.status(401).json({ message: "Invalid credentials" });
+        return;
+      }
+
+      const isTempPasswordMatch = await bcrypt.compare(password, tempAcc.tempPassword);
+      if (!isTempPasswordMatch) {
+        res.status(401).json({ message: "Invalid credentials" });
+        return;
+      }
+
+      const tempToken = jwt.sign(
+        { id: tempAcc._id, role: tempAcc.role },
+        process.env.JWT_SECRET as string,
+        { expiresIn: "1h" }
+      );
+
+      res.json({
+        token: tempToken,
+        user: {
+          id: tempAcc._id,
+          role: tempAcc.role,
+          email: tempAcc.email,
+          signUpStatus: tempAcc.signUpStatus,
+          department: tempAcc.department,
+          program: tempAcc.program || null,
+          profilePhoto: tempAcc.profilePhoto,
+          dateSignedUp: tempAcc.dateSignedUp,
+        },
+        requiresCompletion: tempAcc.signUpStatus === "accepted_needs_completion",
+      });
       return;
     }
 
-    const isTempPasswordMatch = await bcrypt.compare(password, tempAcc.tempPassword);
-    if (!isTempPasswordMatch) {
-      res.status(401).json({ message: "Invalid credentials" });
-      return;
-    }
-
-    const tempToken = jwt.sign(
-      { id: tempAcc._id, role: tempAcc.role },
-      process.env.JWT_SECRET as string,
-      { expiresIn: "1h" }
-    );
-
-    res.json({
-      token: tempToken,
-      user: {
-        id: tempAcc._id,
-        role: tempAcc.role,
-        email: tempAcc.email,
-        signUpStatus: tempAcc.signUpStatus,
-        department: tempAcc.department,
-        program: tempAcc.program || null,
-        profilePhoto: tempAcc.profilePhoto,
-        dateSignedUp: tempAcc.dateSignedUp,
-      },
-      requiresCompletion: tempAcc.signUpStatus === "accepted_needs_completion",
-    });
+    res.status(401).json({ message: "Invalid credentials" });
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// ✅ GET ALL COLLEGES
+// ✅ GET ALL COLLEGES (works offline)
 router.get("/colleges", async (req: Request, res: Response) => {
   try {
-    const colleges = await College.find();
+    const colleges = await CollegeService.findAll();
     res.status(200).json(colleges);
   } catch (error) {
     console.error("Failed to fetch colleges:", error);
@@ -319,12 +333,13 @@ router.get("/colleges", async (req: Request, res: Response) => {
   }
 });
 
+// ✅ GET COURSES BY COLLEGE (works offline)
 router.post("/selected-college", async (req: Request, res: Response): Promise<void> => {
   const { collegeCode } = req.body;
 
   try {
     // Step 1: Find the college by code
-    const college = await College.findOne({ code: collegeCode });
+    const college = await CollegeService.findByCode(collegeCode);
 
     if (!college) {
       res.status(404).json({ message: "College not found" });
@@ -332,7 +347,7 @@ router.post("/selected-college", async (req: Request, res: Response): Promise<vo
     }
 
     // Step 2: Use the college _id to find matching courses
-    const courses = await Course.find({ college: college._id }).populate("college");
+    const courses = await CourseService.findByCollege(college._id || college.id || '');
 
     // Step 3: Return the courses
     res.status(200).json(courses);

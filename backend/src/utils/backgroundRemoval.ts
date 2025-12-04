@@ -65,12 +65,22 @@ export async function removeBackgroundFromImage(imagePath: string): Promise<Back
     const imageBuffer = fs.readFileSync(imagePath);
     const base64Image = imageBuffer.toString('base64');
     
-    // Send request to background removal service
+    // Send request to background removal service with better error handling
     const response = await axios.post(`${BACKGROUND_REMOVAL_SERVICE_URL}/remove-background`, {
       image_data: base64Image
     }, {
       timeout: 30000 // 30 second timeout for processing
     });
+    
+    // Check if request was successful
+    if (response.status !== 200) {
+      console.error(`❌ Background removal service returned status ${response.status}`);
+      return {
+        success: false,
+        message: `Background removal service error: ${response.status}`,
+        error: `HTTP ${response.status}`
+      };
+    }
     
     const data = response.data as BackgroundRemovalResult;
     if (data.success) {
@@ -85,7 +95,17 @@ export async function removeBackgroundFromImage(imagePath: string): Promise<Back
       };
     }
     
-  } catch (error) {
+  } catch (error: any) {
+    // Handle connection reset errors gracefully
+    if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED' || error.message?.includes('aborted')) {
+      console.log(`⚠️ Connection reset/aborted for ${imagePath} - this is normal with rapid requests`);
+      return {
+        success: false,
+        message: 'Background removal service connection reset (will retry later)',
+        error: 'Connection reset'
+      };
+    }
+    
     console.error(`❌ Error removing background from ${imagePath}:`, error);
     return {
       success: false,

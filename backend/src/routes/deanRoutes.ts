@@ -11,9 +11,19 @@ import path from "path";
 import fs from "fs";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
+import User from "../models/User";
+import { 
+  UserService, 
+  CollegeService, 
+  CourseService, 
+  ScheduleService, 
+  LogService 
+} from "../services/dataService";
+import { isOfflineMode } from "../utils/systemMode";
 
 const router = express.Router();
 
+// COLLEGE COURSES - WORKS OFFLINE
 router.post(
   "/college-courses",
   async (req: Request, res: Response): Promise<void> => {
@@ -21,21 +31,23 @@ router.post(
 
     if (!collegeCode) {
       res.status(400).json({ message: "collegeCode is required." });
-      return; // exit early
+      return;
     }
 
     try {
-      const college = await College.findOne({ code: collegeCode });
+      // Use data service (works both online and offline)
+      const college = await CollegeService.findByCode(collegeCode);
 
       if (!college) {
         res.status(404).json({ message: "College not found." });
-        return; // exit early
+        return;
       }
 
-      const courses = await Course.find({ college: college._id });
+      const collegeId = college._id || college.id || '';
+      const courses = await CourseService.findByCollege(collegeId);
 
       res.status(200).json({
-        collegeId: college._id,
+        collegeId: collegeId,
         courses,
       });
     } catch (error) {
@@ -93,7 +105,7 @@ router.post("/all-courses", async (req: Request, res: Response): Promise<void> =
     }
 
     // 3️⃣ Fetch courses (filtered or all)
-    const courses = await Course.find(filter).populate("college", "collegeName code");
+    const courses = await Course.find(filter).populate("college", "collegeName code").lean();
 
     res.status(200).json({
       success: true,
@@ -109,32 +121,47 @@ router.post("/all-courses", async (req: Request, res: Response): Promise<void> =
   }
 });
 
+// DEAN SHOW MONTHLY LOGS - WORKS OFFLINE
 router.post(
   "/dean-show-monthly-department-logs",
   async (req: Request, res: Response) => {
     try {
       const { courseCode } = req.body;
 
-      const query: any = {};
+      // Use data service (works both online and offline)
+      let logs = await LogService.findAll();
+      
+      // Filter by course code if provided
       if (courseCode) {
-        query.course = courseCode;
+        logs = logs.filter(log => log.course === courseCode);
       }
 
-      const logs = await Log.find(query)
-        .populate({
-          path: "schedule",
-          populate: {
-            path: "instructor",
-            select: "first_name middle_name last_name", // ✅ only return names
-          },
-        })
-        .populate("college")
-        .lean();
+      // Enrich logs with schedule and instructor info
+      const enrichedLogs = await Promise.all(logs.map(async (log) => {
+        const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        let schedule = null;
+        let instructor = null;
+        
+        if (scheduleId) {
+          schedule = await ScheduleService.findById(scheduleId);
+          if (schedule && typeof schedule.instructor === 'object') {
+            instructor = schedule.instructor;
+          }
+        }
+        
+        return {
+          ...log,
+          schedule: schedule ? {
+            ...schedule,
+            instructor: instructor
+          } : null
+        };
+      }));
 
       res.status(200).json({
         success: true,
-        count: logs.length,
-        data: logs,
+        count: enrichedLogs.length,
+        data: enrichedLogs,
       });
     } catch (error: unknown) {
       if (error instanceof Error) {
@@ -142,36 +169,45 @@ router.post(
         res.status(500).json({ success: false, message: error.message });
       } else {
         console.error("❌ Unknown error fetching logs:", error);
-        res
-          .status(500)
-          .json({ success: false, message: "Unknown error occurred" });
+        res.status(500).json({ success: false, message: "Unknown error occurred" });
       }
     }
   }
 );
 
+// DEAN GENERATE MONTHLY REPORT - WORKS OFFLINE
 router.post(
   "/dean-generate-monthly-department-logs",
   async (req: Request, res: Response) => {
     try {
       const { courseCode, selectedMonth, selectedYear } = req.body;
 
-      const query: any = {};
-      if (courseCode) query.course = courseCode;
-
       console.log(`[REPORT] Generating dean report for courseCode: "${courseCode}", Month: ${selectedMonth}, Year: ${selectedYear}`);
 
-      // 🔹 Fetch all logs first
-      const logs = await Log.find(query)
-        .populate({
-          path: "schedule",
-          populate: {
-            path: "instructor",
-            select: "first_name middle_name last_name",
-          },
-        })
-        .populate("college")
-        .lean();
+      // Use data service (works both online and offline)
+      let allLogs = await LogService.findAll();
+      
+      // Filter by course code if provided
+      if (courseCode) {
+        allLogs = allLogs.filter(log => log.course === courseCode);
+      }
+
+      // Enrich logs with schedule and instructor info
+      const logs = await Promise.all(allLogs.map(async (log) => {
+        const scheduleId = typeof log.schedule === 'string' ? log.schedule : (log.schedule as any)?._id;
+        let schedule = null;
+        
+        if (scheduleId) {
+          schedule = await ScheduleService.findById(scheduleId);
+        }
+        
+        return {
+          ...log,
+          schedule: schedule,
+          timeIn: log.timeIn,
+          timeout: log.timeout
+        };
+      }));
 
       console.log(`[REPORT] Fetched ${logs.length} total logs from database`);
 
@@ -371,7 +407,7 @@ router.get(
   }
 );
 
-// FETCH ALL FULL SCHEDULES TODAY BASED ON COURSE
+// FETCH ALL FULL SCHEDULES TODAY BASED ON COURSE - WORKS OFFLINE
 router.post(
   "/dean/all-schedules/today",
   async (req: Request, res: Response): Promise<void> => {
@@ -386,13 +422,16 @@ router.post(
       const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
       const today = dayNames[new Date().getDay()];
 
-      const schedules = await Schedule.find({
-        courseCode: { $regex: `^${shortCourseValue}`, $options: "i" },
-        [`days.${today}`]: true,
-      })
-        .populate("instructor", "first_name last_name")
-        .populate("section", "course section block")
-        .lean();
+      // Use data service (works both online and offline)
+      const allSchedules = await ScheduleService.findAll();
+      
+      // Filter by course code and today's day
+      const schedules = allSchedules.filter(s => {
+        const courseMatch = s.courseCode.toLowerCase().startsWith(shortCourseValue.toLowerCase());
+        const days = s.days as { [key: string]: boolean };
+        const dayMatch = days && days[today] === true;
+        return courseMatch && dayMatch;
+      });
 
       res.status(200).json(schedules);
     } catch (error) {
@@ -402,9 +441,44 @@ router.post(
   }
 );
 
-// GET Program Chairpersons based on College Code from query
+// GET Program Chairpersons based on College Code - WORKS OFFLINE
 router.get(
   "/programchairs",
+  async (req: Request, res: Response): Promise<void> => {
+    const { collegeCode } = req.query;
+
+    if (!collegeCode) {
+      res.status(400).json({ message: "collegeCode is missing" });
+      return;
+    }
+
+    try {
+      // Use data service (works both online and offline)
+      const college = await CollegeService.findByCode(collegeCode as string);
+      if (!college) {
+        res.status(404).json({ message: "College not found" });
+        return;
+      }
+      
+      const collegeId = college._id || college.id || '';
+      const allUsers = await UserService.findByCollege(collegeId);
+      
+      // Filter for program chairs and instructors
+      const programChairs = allUsers.filter(u => 
+        u.role === 'programchairperson' || u.role === 'instructor'
+      );
+      
+      res.status(200).json(programChairs);
+    } catch (error) {
+      console.error("Error fetching program chairs:", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  }
+);
+
+// LEGACY: Original programchairs route (kept for reference)
+router.get(
+  "/programchairs-legacy",
   async (req: Request, res: Response): Promise<void> => {
     const { collegeCode } = req.query;
 
@@ -514,5 +588,365 @@ router.get(
   }
 );
 
+// ✅ VALIDATE FACULTY SCHEDULE WITH TIME AND ROOM
+// This function checks if a faculty member has a valid schedule at the current time AND in the specified room
+// Returns: { isValid: boolean, schedule: Schedule | null, reason: string }
+router.post(
+  "/validate-faculty-schedule",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { instructorName, roomName, cameraId } = req.body;
+
+      if (!instructorName) {
+        res.status(400).json({
+          success: false,
+          message: "instructorName is required",
+          isValid: false,
+        });
+        return;
+      }
+
+      // Parse instructor name (format: "LastName, FirstName" or "FirstName LastName")
+      const parts = instructorName.split(",").map((s: string) => s.trim());
+      let firstName: string, lastName: string;
+
+      if (parts.length === 2) {
+        lastName = parts[0];
+        firstName = parts[1];
+      } else {
+        // If not in "Last, First" format, try space-separated
+        const spaceParts = instructorName.split(" ");
+        firstName = spaceParts[0] || "";
+        lastName = spaceParts.slice(1).join(" ") || "";
+      }
+
+      // Find the instructor in the User collection
+      const instructor = await User.findOne({
+        first_name: { $regex: new RegExp(`^${firstName}$`, "i") },
+        last_name: { $regex: new RegExp(`^${lastName}$`, "i") },
+        role: { $in: ["instructor", "programchairperson"] },
+      });
+
+      if (!instructor) {
+        res.json({
+          success: true,
+          isValid: false,
+          schedule: null,
+          reason: "Instructor not found",
+        });
+        return;
+      }
+
+      // Get current time and day
+      const now = new Date();
+      const currentHours = now.getHours();
+      const currentMinutes = currentHours * 60 + now.getMinutes();
+      const currentTime = `${String(currentHours).padStart(2, "0")}:${String(
+        now.getMinutes()
+      ).padStart(2, "0")}`;
+      const dayOfWeek = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][
+        now.getDay()
+      ];
+      const currentDateStr = now.toISOString().slice(0, 10);
+
+      // Build query for the current day
+      const daysQuery: any = {};
+      daysQuery[`days.${dayOfWeek}`] = true;
+
+      // Find schedules for this instructor, current day, within semester dates
+      let schedules = await Schedule.find({
+        instructor: instructor._id,
+        ...daysQuery,
+        semesterStartDate: { $lte: currentDateStr },
+        semesterEndDate: { $gte: currentDateStr },
+      })
+        .populate("instructor section")
+        .lean();
+
+      // Fallback: manually filter if no results (in case day query doesn't work)
+      if (schedules.length === 0) {
+        const allSchedules = await Schedule.find({
+          instructor: instructor._id,
+          semesterStartDate: { $lte: currentDateStr },
+          semesterEndDate: { $gte: currentDateStr },
+        })
+          .populate("instructor section")
+          .lean();
+
+        schedules = allSchedules.filter((s: any) => {
+          const days = s.days || {};
+          return days[dayOfWeek] === true;
+        });
+      }
+
+      if (schedules.length === 0) {
+        res.json({
+          success: true,
+          isValid: false,
+          schedule: null,
+          reason: "No schedule found for today",
+        });
+        return;
+      }
+
+      // Check each schedule to see if it matches current time AND room
+      for (const schedule of schedules) {
+        // Parse schedule start and end times
+        const [startH, startM] = schedule.startTime.split(":").map(Number);
+        const [endH, endM] = schedule.endTime.split(":").map(Number);
+        const startMinutes = startH * 60 + startM;
+        const endMinutes = endH * 60 + endM;
+
+        // Check if current time is within schedule time
+        const isTimeValid = currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+
+        if (!isTimeValid) {
+          continue; // Skip this schedule, check next one
+        }
+
+        // If roomName is provided, validate it matches the schedule room
+        if (roomName) {
+          const scheduleRoom = (schedule.room || "").trim().toLowerCase();
+          const providedRoom = roomName.trim().toLowerCase();
+
+          // Check if rooms match (exact match or partial match)
+          const isRoomValid =
+            scheduleRoom === providedRoom ||
+            scheduleRoom.includes(providedRoom) ||
+            providedRoom.includes(scheduleRoom);
+
+          if (isRoomValid) {
+            // ✅ VALID: Both time AND room match
+            res.json({
+              success: true,
+              isValid: true,
+              schedule: schedule,
+              reason: "Valid schedule - time and room match",
+              timeMatch: true,
+              roomMatch: true,
+            });
+            return;
+          } else {
+            // ⚠️ TIME MATCHES BUT ROOM DOESN'T
+            res.json({
+              success: true,
+              isValid: false,
+              schedule: schedule,
+              reason: "Schedule time matches but room does not match",
+              timeMatch: true,
+              roomMatch: false,
+              expectedRoom: schedule.room,
+              providedRoom: roomName,
+            });
+            return;
+          }
+        } else {
+          // No room provided - just validate time (for backward compatibility)
+          res.json({
+            success: true,
+            isValid: true,
+            schedule: schedule,
+            reason: "Valid schedule - time matches (room not validated)",
+            timeMatch: true,
+            roomMatch: null,
+          });
+          return;
+        }
+      }
+
+      // No matching schedule found
+      res.json({
+        success: true,
+        isValid: false,
+        schedule: null,
+        reason: "No schedule found for current time",
+        timeMatch: false,
+        roomMatch: null,
+      });
+    } catch (error) {
+      console.error("Error validating faculty schedule:", error);
+      res.status(500).json({
+        success: false,
+        isValid: false,
+        schedule: null,
+        reason: "Server error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+);
+
+// ✅ CHECK DATA SOURCE STATUS (local DB vs MongoDB)
+router.get(
+  "/data-source-status",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      
+      const localDbPath = path.join(__dirname, "../../face_detection_data.db");
+      const embeddingDbPath = path.join(__dirname, "../../face_embeddings.db");
+      
+      const localDbExists = fs.existsSync(localDbPath);
+      const embeddingDbExists = fs.existsSync(embeddingDbPath);
+      
+      let localDbStats: any = null;
+      let embeddingDbStats: any = null;
+      
+      if (localDbExists) {
+        try {
+          const stats = fs.statSync(localDbPath);
+          localDbStats = {
+            exists: true,
+            size: stats.size,
+            sizeMB: (stats.size / (1024 * 1024)).toFixed(2),
+            modified: stats.mtime.toISOString(),
+            message: "Local database file exists",
+          };
+        } catch (e) {
+          localDbStats = { exists: true, error: "Could not read stats" };
+        }
+      }
+      
+      if (embeddingDbExists) {
+        try {
+          const stats = fs.statSync(embeddingDbPath);
+          embeddingDbStats = {
+            exists: true,
+            size: stats.size,
+            sizeMB: (stats.size / (1024 * 1024)).toFixed(2),
+            modified: stats.mtime.toISOString(),
+            message: "Embedding database file exists",
+          };
+        } catch (e) {
+          embeddingDbStats = { exists: true, error: "Could not read stats" };
+        }
+      }
+      
+      // Check MongoDB connection
+      const mongoose = require("mongoose");
+      const mongoConnected = mongoose.connection.readyState === 1;
+      
+      // Determine system mode
+      const usingLocal = localDbExists && embeddingDbExists;
+      
+      res.json({
+        success: true,
+        localDatabase: {
+          schedules: localDbStats || { exists: false, message: "Local database not found" },
+          embeddings: embeddingDbStats || { exists: false, message: "Embedding database not found" },
+          status: usingLocal ? "Available" : "Not Available",
+        },
+        mongodb: {
+          connected: mongoConnected,
+          status: mongoConnected ? "Connected" : "Not Connected",
+          message: mongoConnected 
+            ? "MongoDB Atlas is connected (used for sync/backup)" 
+            : "MongoDB Atlas is not connected (system works offline)",
+        },
+        systemMode: {
+          primary: usingLocal ? "Local (Offline)" : "MongoDB (Online)",
+          fallback: usingLocal ? "MongoDB (Sync only)" : "Local (if available)",
+          message: usingLocal
+            ? "System is using LOCAL databases (works offline). MongoDB used for sync only."
+            : "System is using MONGODB (requires internet). Local databases not found.",
+        },
+        recommendation: usingLocal
+          ? "System is configured for offline operation. All face detection data is stored locally."
+          : "To enable offline mode, sync schedules to local database using /sync-schedules-to-local endpoint.",
+        howToCheck: {
+          logs: "Look for [DATA SOURCE] tags in Python recognizer output:",
+          localDb: "[DATA SOURCE] [LOCAL DB] = Using local SQLite (OFFLINE)",
+          cache: "[DATA SOURCE] [CACHE] = Using in-memory cache (OFFLINE)",
+          mongodb: "[DATA SOURCE] [MONGODB API] = Using MongoDB Atlas (ONLINE)",
+          fileSystem: "[DATA SOURCE] [FILE SYSTEM] = Processing images from disk",
+        },
+      });
+    } catch (error) {
+      console.error("Error checking data source status:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error checking status",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+);
+
+// ✅ SYNC SCHEDULES TO LOCAL DATABASE (for offline face detection)
+router.post(
+  "/sync-schedules-to-local",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { collegeCode } = req.body;
+
+      // Get all schedules (or filter by college if provided)
+      let schedules;
+      if (collegeCode) {
+        const college = await College.findOne({ code: collegeCode });
+        if (!college) {
+          res.status(404).json({
+            success: false,
+            message: "College not found",
+          });
+          return;
+        }
+
+        // Get all instructors in this college
+        const instructors = await UserModel.find({
+          college: college._id,
+          role: { $in: ["instructor", "programchairperson"] },
+        });
+
+        const instructorIds = instructors.map((inst) => inst._id);
+
+        schedules = await Schedule.find({
+          instructor: { $in: instructorIds },
+        })
+          .populate("instructor", "first_name last_name")
+          .populate("section")
+          .lean();
+      } else {
+        schedules = await Schedule.find()
+          .populate("instructor", "first_name last_name")
+          .populate("section")
+          .lean();
+      }
+
+      // Format schedules for local database
+      const formattedSchedules = schedules.map((schedule: any) => ({
+        _id: schedule._id.toString(),
+        instructor_id: schedule.instructor?._id?.toString() || "",
+        instructor_name: schedule.instructor
+          ? `${schedule.instructor.last_name}, ${schedule.instructor.first_name}`
+          : "",
+        courseCode: schedule.courseCode,
+        courseTitle: schedule.courseTitle,
+        room: schedule.room,
+        startTime: schedule.startTime,
+        endTime: schedule.endTime,
+        semesterStartDate: schedule.semesterStartDate,
+        semesterEndDate: schedule.semesterEndDate,
+        days: schedule.days || {},
+        section_id: schedule.section?._id?.toString() || "",
+      }));
+
+      res.status(200).json({
+        success: true,
+        message: `Prepared ${formattedSchedules.length} schedules for local database`,
+        count: formattedSchedules.length,
+        schedules: formattedSchedules,
+        // Note: The Python recognizer will save these to local SQLite database
+      });
+    } catch (error) {
+      console.error("Error syncing schedules:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+);
 
 export default router;

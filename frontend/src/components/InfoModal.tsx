@@ -21,6 +21,7 @@ import {
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import PersonIcon from "@mui/icons-material/Person";
+import DeleteIcon from "@mui/icons-material/Delete";
 import CalendarHeatmap from "react-calendar-heatmap";
 import "react-calendar-heatmap/dist/styles.css";
 import "./CustomHeatmap.css";
@@ -43,7 +44,10 @@ dayjs.extend(isBetween);
 import AddManualScheduleModal from "./AddManualScheduleModal";
 
 // Custom Tooltip Component for Heatmap
-const CustomHeatmapTooltip: React.FC<{ values: any[] }> = ({ values }) => {
+const CustomHeatmapTooltip: React.FC<{ 
+  values: any[]; 
+  containerId?: string;
+}> = ({ values, containerId = 'heatmap-container' }) => {
   const [tooltip, setTooltip] = useState<{
     show: boolean;
     x: number;
@@ -54,17 +58,38 @@ const CustomHeatmapTooltip: React.FC<{ values: any[] }> = ({ values }) => {
   useEffect(() => {
     const handleMouseOver = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+      
+      // Only process events from within the heatmap container
+      const heatmapContainer = document.getElementById(containerId);
+      if (!heatmapContainer || !heatmapContainer.contains(target)) return;
+      
       // Check if the target is a rect element or inside one
       const rect = target.tagName === 'rect' ? target : target.closest('rect');
       if (!rect) return;
 
-      const date = rect.getAttribute('data-date');
+      // Try multiple attribute names that react-calendar-heatmap might use
+      const date = rect.getAttribute('data-date') || 
+                   rect.getAttribute('data-tip')?.split(':')[0]?.trim() ||
+                   rect.getAttribute('title');
+      
       if (!date) return;
 
-      const value = values.find((v) => v.date === date);
+      // Parse date - handle different formats
+      let parsedDate = date;
+      if (date.includes(',')) {
+        // Format: "2024-01-15: 3 activities"
+        parsedDate = date.split(':')[0].trim();
+      }
+
+      const value = values.find((v) => {
+        const valueDate = new Date(v.date).toISOString().split('T')[0];
+        const parsedDateStr = new Date(parsedDate).toISOString().split('T')[0];
+        return valueDate === parsedDateStr;
+      });
+      
       if (!value) return;
 
-      const formattedDate = new Date(date).toLocaleDateString('en-US', {
+      const formattedDate = new Date(value.date).toLocaleDateString('en-US', {
         weekday: 'short',
         year: 'numeric',
         month: 'short',
@@ -79,6 +104,20 @@ const CustomHeatmapTooltip: React.FC<{ values: any[] }> = ({ values }) => {
           <Typography variant="caption" sx={{ mt: 0.5, display: 'block', color: 'rgba(255,255,255,0.8)' }}>
             {value.count} {value.count === 1 ? 'activity' : 'activities'}
           </Typography>
+          {(value.hoursPresent > 0 || value.hoursAbsent > 0) && (
+            <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+              {value.hoursPresent > 0 && (
+                <Typography variant="caption" sx={{ display: 'block', color: '#4caf50', fontWeight: 'medium' }}>
+                  Present: {value.hoursPresent} {value.hoursPresent === 1 ? 'hour' : 'hours'}
+                </Typography>
+              )}
+              {value.hoursAbsent > 0 && (
+                <Typography variant="caption" sx={{ display: 'block', color: '#f44336', fontWeight: 'medium', mt: 0.5 }}>
+                  Absent: {value.hoursAbsent} {value.hoursAbsent === 1 ? 'hour' : 'hours'}
+                </Typography>
+              )}
+            </Box>
+          )}
         </Box>
       );
 
@@ -102,10 +141,11 @@ const CustomHeatmapTooltip: React.FC<{ values: any[] }> = ({ values }) => {
     const handleMouseOut = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       const rect = target.tagName === 'rect' ? target : target.closest('rect');
+      
       if (rect) {
-        // Only hide if we're leaving the rect
+        // Only hide if we're leaving the rect and not moving to another rect
         const relatedTarget = (e.relatedTarget as HTMLElement);
-        if (!relatedTarget || !rect.contains(relatedTarget)) {
+        if (!relatedTarget || (relatedTarget.tagName !== 'rect' && !relatedTarget.closest('rect'))) {
           setTooltip({ show: false, x: 0, y: 0, content: null });
         }
       } else {
@@ -123,7 +163,7 @@ const CustomHeatmapTooltip: React.FC<{ values: any[] }> = ({ values }) => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseout', handleMouseOut);
     };
-  }, [values]);
+  }, [values, containerId]);
 
   if (!tooltip.show) return null;
 
@@ -174,12 +214,15 @@ interface Schedule {
   [key: string]: any;
 }
 
+// Persist heatmap maximize state across faculty changes
+let globalHeatmapMaximized = false;
+
 const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [isHeatmapMaximized, setIsHeatmapMaximized] = useState(false);
+  const [isHeatmapMaximized, setIsHeatmapMaximized] = useState(globalHeatmapMaximized);
   const today = new Date();
   const startDate = new Date(today.getFullYear(), 0, 1);
   const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -225,6 +268,45 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
   const handleCloseAddManual = async () => {
     setOpenAddManualModal(false);
     await fetchSchedules();
+  };
+
+  // Delete schedule function
+  const handleDeleteSchedule = async (scheduleId: string, courseCode: string) => {
+    const result = await Swal.fire({
+      title: 'Delete Schedule?',
+      text: `Are you sure you want to delete ${courseCode}? This action cannot be undone.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Yes, delete it!',
+      cancelButtonText: 'Cancel'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+        await axios.delete(`${API_BASE_URL}/api/auth/schedules/${scheduleId}`);
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Deleted!',
+          text: 'Schedule has been deleted successfully.',
+          timer: 2000,
+          showConfirmButton: false
+        });
+        
+        // Refresh schedules
+        await fetchSchedules();
+      } catch (error: any) {
+        console.error('Error deleting schedule:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: error.response?.data?.message || 'Failed to delete schedule. Please try again.',
+        });
+      }
+    }
   };
 
   const handleAddSchedule = async () => {
@@ -481,20 +563,60 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
   if (!faculty) return null;
 
   const processLogsForHeatmap = () => {
-    const logCounts: { [key: string]: number } = {};
+    const logData: { 
+      [key: string]: { 
+        count: number; 
+        hoursPresent: number; 
+        hoursAbsent: number;
+      } 
+    } = {};
 
     logs.forEach((log: any) => {
       const date = log.date;
-      if (logCounts[date]) {
-        logCounts[date] += 1;
-      } else {
-        logCounts[date] = 1;
+      if (!date) return;
+
+      if (!logData[date]) {
+        logData[date] = {
+          count: 0,
+          hoursPresent: 0,
+          hoursAbsent: 0,
+        };
+      }
+
+      logData[date].count += 1;
+
+      // Calculate hours present (for present, late, excuse, Returned statuses)
+      const status = log.status?.toLowerCase() || '';
+      if (['present', 'late', 'excuse', 'returned'].includes(status)) {
+        if (log.timeIn && log.timeout) {
+          const [inH, inM] = log.timeIn.split(":").map(Number);
+          const [outH, outM] = log.timeout.split(":").map(Number);
+          if (!isNaN(inH) && !isNaN(inM) && !isNaN(outH) && !isNaN(outM)) {
+            const hours = (outH * 60 + outM - (inH * 60 + inM)) / 60;
+            logData[date].hoursPresent += hours;
+          }
+        }
+      }
+
+      // Calculate hours absent (for absent status - use scheduled hours)
+      if (status === 'absent' && log.schedule) {
+        const schedule = log.schedule;
+        if (schedule.startTime && schedule.endTime) {
+          const [sh, sm] = schedule.startTime.split(":").map(Number);
+          const [eh, em] = schedule.endTime.split(":").map(Number);
+          if (!isNaN(sh) && !isNaN(sm) && !isNaN(eh) && !isNaN(em)) {
+            const hours = (eh * 60 + em - (sh * 60 + sm)) / 60;
+            logData[date].hoursAbsent += hours;
+          }
+        }
       }
     });
 
-    return Object.keys(logCounts).map((date) => ({
+    return Object.keys(logData).map((date) => ({
       date,
-      count: logCounts[date],
+      count: logData[date].count,
+      hoursPresent: Number(logData[date].hoursPresent.toFixed(2)),
+      hoursAbsent: Number(logData[date].hoursAbsent.toFixed(2)),
     }));
   };
 
@@ -775,7 +897,11 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                 >
                   <IconButton
                     size="small"
-                    onClick={() => setIsHeatmapMaximized((s) => !s)}
+                    onClick={() => {
+                      const newState = !isHeatmapMaximized;
+                      globalHeatmapMaximized = newState;
+                      setIsHeatmapMaximized(newState);
+                    }}
                     aria-label={
                       isHeatmapMaximized
                         ? "minimize heatmap"
@@ -796,6 +922,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
               </Typography>
 
               <Box
+                id="heatmap-container"
                 sx={
                   isHeatmapMaximized
                     ? {
@@ -807,7 +934,14 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                         width: "100%",
                         minHeight: "calc(80vh - 120px)",
                       }
-                    : { width: "100%" }
+                    : { 
+                        width: "100%",
+                        height: "100%",
+                        minHeight: "250px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }
                 }
                 className={`heatmap-wrapper ${isHeatmapMaximized ? 'maximized' : ''}`}
               >
@@ -815,20 +949,23 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                   sx={{
                     position: 'relative',
                     width: '100%',
+                    height: '100%',
                     ...(isHeatmapMaximized ? {
-                      height: '100%',
                       minHeight: '500px',
-                    } : {}),
+                    } : {
+                      minHeight: '200px',
+                    }),
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     '& .react-calendar-heatmap': {
                       width: '100%',
+                      height: '100%',
                       ...(isHeatmapMaximized ? {
                         maxWidth: 'none !important',
                         '& svg': {
                           width: '100% !important',
-                          height: 'auto !important',
+                          height: '100% !important',
                           maxWidth: 'none !important',
                         },
                         '& .react-calendar-heatmap-week > rect': {
@@ -838,7 +975,12 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                         '& text': {
                           fontSize: '12px !important',
                         },
-                      } : {}),
+                      } : {
+                        '& svg': {
+                          width: '100%',
+                          height: '100%',
+                        },
+                      }),
                     },
                     '& .react-calendar-heatmap rect': {
                       cursor: 'pointer',
@@ -865,6 +1007,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                         tooltipDataAttrs={(value) => {
                           if (value && value.date) {
                             return {
+                              "data-date": value.date,
                               "data-tip": `${value.date}: ${value.count} activities`,
                             } as unknown as CalendarHeatmap.TooltipDataAttrs;
                           }
@@ -872,7 +1015,10 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                         }}
                         showWeekdayLabels
                       />
-                      <CustomHeatmapTooltip values={values} />
+                      <CustomHeatmapTooltip 
+                        values={values} 
+                        containerId="heatmap-container"
+                      />
                     </>
                   ) : (
                     <Box sx={{ p: 3, textAlign: 'center' }}>
@@ -960,7 +1106,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
               <Table size="small" aria-label="faculty schedules table">
                 <TableHead>
                   <TableRow>
-                    {["Course Code", "Days", "Time", "Section", "Room"].map(
+                    {["Course Code", "Days", "Time", "Section", "Room", "Actions"].map(
                       (label) => (
                         <TableCell
                           key={label}
@@ -981,7 +1127,7 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                 <TableBody>
                   {isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={6} align="center">
+                      <TableCell colSpan={7} align="center">
                         <CircularProgress size={24} />
                       </TableCell>
                     </TableRow>
@@ -1031,11 +1177,21 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
                             {schedule.section?.block}
                           </TableCell>
                           <TableCell>{schedule.room}</TableCell>
+                          <TableCell>
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => handleDeleteSchedule(schedule._id, schedule.courseCode)}
+                              title="Delete schedule"
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </TableCell>
                         </TableRow>
                       ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={6} align="center">
+                      <TableCell colSpan={7} align="center">
                         No schedules yet
                       </TableCell>
                     </TableRow>

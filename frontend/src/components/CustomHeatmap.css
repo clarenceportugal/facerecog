@@ -1,23 +1,24 @@
 /* base heatmap styles (keeps small default) */
 .heatmap-wrapper .react-calendar-heatmap text {
-  font-size: 5px;
+  font-size: 6px;
   dominant-baseline: hanging;
   transform: translateY(-8px);
 }
 
 /* default rect size (keeps small view) */
 .heatmap-wrapper .react-calendar-heatmap .react-calendar-heatmap-week > rect {
-  width: 8px !important;
-  height: 8px !important;
-  rx: 1px;
+  width: 10px !important;
+  height: 10px !important;
+  rx: 2px;
   ry: 2px;
 }
 
 /* default container width (desktop default) */
 .heatmap-wrapper .react-calendar-heatmap {
   width: 100%;
-  max-width: 500px;
+  max-width: 100%;
   margin: auto;
+  padding: 5px;
 }
 
 /* SVG layout tweaks */
@@ -25,6 +26,8 @@
   display: block;
   margin: 0 auto;
   padding-bottom: 0 !important;
+  width: 100%;
+  height: auto;
 }
 
 /* ==== Maximized state: override sizes so the heatmap content enlarges ==== */
@@ -57,4 +60,17 @@
   width: 100% !important;
   height: auto !important;
   max-height: none !important;
+}
+
+/* Attendance-based colors */
+.react-calendar-heatmap .color-attendance-full {
+  fill: #28a745; /* Green - all present */
+}
+
+.react-calendar-heatmap .color-attendance-partial {
+  fill: #ffc107; /* Yellow/Orange - partial attendance */
+}
+
+.react-calendar-heatmap .color-attendance-none {
+  fill: #dc3545; /* Red - completely absent */
 }

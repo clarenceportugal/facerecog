@@ -11,7 +11,8 @@ router.get("/dean", async (req: Request, res: Response): Promise<void> => {
   try {
     const deanList = await UserModel.find({ role: "dean" })
       .select("first_name middle_name last_name ext_name username email college status")
-      .populate("college", "code name");
+      .populate("college", "code name")
+      .lean(); // Use lean() for faster queries (returns plain JS objects)
 
     res.json(deanList);
   } catch (error) {
@@ -23,7 +24,8 @@ router.get("/dean", async (req: Request, res: Response): Promise<void> => {
 router.get("/programchairinfo-only", async (req: Request, res: Response): Promise<void> => {
   try {
     const deanList = await UserModel.find({ role: "programchairperson" })
-      .populate("college", "code name");
+      .populate("college", "code name")
+      .lean(); // Use lean() for faster queries
 
     res.json(deanList);
   } catch (error) {
@@ -36,17 +38,16 @@ router.get("/instructorinfo-only", async (req: Request, res: Response): Promise<
   try {
     const instructorList = await UserModel.find({ role: "instructor" })
       .populate("college", "code name")
-      .populate("course", "code");
+      .populate("course", "code")
+      .lean(); // Use lean() for faster queries
 
     // Transform the response to strip out course._id
     const transformed = instructorList.map((instructor) => {
-  const instructorObj = instructor.toObject();
-  return {
-    ...instructorObj,
-    course: (instructorObj.course as any)?.code || null, // cast to any
-  };
-});
-
+      return {
+        ...instructor,
+        course: (instructor.course as any)?.code || null, // cast to any
+      };
+    });
 
     res.json(transformed);
   } catch (error) {
@@ -79,7 +80,7 @@ router.post(
 
 router.get("/colleges", async (req: Request, res: Response) => {
   try {
-    const colleges = await College.find();
+    const colleges = await College.find().lean(); // Use lean() for faster queries
     res.status(200).json(colleges);
   } catch (error) {
     console.error("Failed to fetch colleges:", error);
@@ -100,7 +101,7 @@ router.post("/selected-college", async (req: Request, res: Response): Promise<vo
     }
 
     // Step 2: Use the college _id to find matching courses
-    const courses = await Course.find({ college: college._id }).populate("college");
+    const courses = await Course.find({ college: college._id }).populate("college").lean();
 
     // Step 3: Return the courses
     res.status(200).json(courses);
@@ -112,7 +113,7 @@ router.post("/selected-college", async (req: Request, res: Response): Promise<vo
 
 router.get('/all-colleges', async (req, res) => {
   try {
-    const colleges = await College.find();
+    const colleges = await College.find().lean(); // Use lean() for faster queries
     res.status(200).json(colleges);
   } catch (error) {
     console.error('Error fetching colleges:', error);

@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Build files
+dist/
+build/
+*.egg-info/
+
+# Environment variables
+.env
+.env.local
+
+# Streaming server dependencies (sympy library)
+streaming-server/sympy/
+
+# Face images (may contain sensitive data)
+streaming-server/faces/
+
+# Cache
+*.cache
+schedule_cache.json
+
+# Temporary files
+*.tmp
+*.temp
+

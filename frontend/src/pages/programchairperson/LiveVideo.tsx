@@ -50,6 +50,8 @@ type DetectionLog = {
   details?: string;
   totalMinutes?: number;
   absenceMinutes?: number;
+  has_schedule?: boolean;  // For determining log color based on schedule
+  is_valid_schedule?: boolean;  // For determining log color (green/yellow)
 };
 
 const LiveVideo: React.FC = () => {
@@ -70,12 +72,18 @@ const LiveVideo: React.FC = () => {
   const [detectionLogs, setDetectionLogs] = useState<DetectionLog[]>([]);
   const [currentCameraName, setCurrentCameraName] = useState<string>("Camera 1");
 
-  // Optimized for instant response - no delays, immediate updates
-  const FACE_TIMEOUT_MS = 0; // No timeout - instant removal when not detected
+  // ⚡ ZERO LAG DISPLAY - Optimized for smooth streaming with no lag
+  const FACE_TIMEOUT_MS = 100; // Small timeout for smooth transitions
   const ABSENCE_TIMEOUT_SECONDS = 300; // 5 minutes
-  const SMOOTHING_FACTOR = 0.9; // Very high smoothing for existing faces (reduces jitter)
-  const NEW_FACE_SMOOTHING_FACTOR = 1.0; // No smoothing for new faces - instant display
+  // Higher factors = faster response = less lag, still smooth
+  const SMOOTHING_FACTOR = 0.85; // Faster response for zero lag (was 0.75)
+  const NEW_FACE_SMOOTHING_FACTOR = 0.95; // New faces appear almost instantly (was 0.90)
   const DETECTION_LOG_INTERVAL_MS = 120000; // 2 minutes in milliseconds
+
+  // Refs for smooth animation loop
+  const animationFrameRef = useRef<number | null>(null);
+  const targetFacesRef = useRef<FaceDetection[]>([]);
+  const displayedFacesRef = useRef<FaceDetection[]>([]);
 
   const smoothBox = (
     currentBox: [number, number, number, number] | undefined,
@@ -86,6 +94,7 @@ const LiveVideo: React.FC = () => {
       return targetBox;
     }
     
+    // Smooth interpolation for buttery movement
     return [
       currentBox[0] + (targetBox[0] - currentBox[0]) * smoothingFactor,
       currentBox[1] + (targetBox[1] - currentBox[1]) * smoothingFactor,
@@ -123,24 +132,35 @@ const LiveVideo: React.FC = () => {
           const jpegData = buffer.slice(4 + metadataLen);
           
           if (metadata.cameraId === selectedCamera) {
+            // ⚡ ZERO LAG: Create blob and update image immediately (no waiting for onload)
             const blob = new Blob([jpegData], { type: 'image/jpeg' });
             const url = URL.createObjectURL(blob);
             
             if (imgRef.current) {
-              imgRef.current.onload = () => {
-                // ⏱️ PROFILING: Log total frontend processing time
-                const totalFrontendTime = performance.now() - frameReceiveTime;
-                if (metadata.faces && metadata.faces.length > 0) {
-                  console.log(`[⏱️ FRONTEND] Frame ${metadata.frameNumber}: Frontend processing = ${totalFrontendTime.toFixed(1)}ms with ${metadata.faces.length} face(s)`);
-                }
-                URL.revokeObjectURL(url);
-              };
+              // ⚡ OPTIMIZED: Revoke old URL asynchronously to prevent blocking
+              const oldUrl = imgRef.current.src;
+              if (oldUrl && oldUrl.startsWith('blob:')) {
+                // Use setTimeout to revoke asynchronously (non-blocking)
+                setTimeout(() => URL.revokeObjectURL(oldUrl), 0);
+              }
+              
+              // ⚡ INSTANT UPDATE: Set src directly (browser will load async)
+              // Use decode() for faster rendering if supported
               imgRef.current.src = url;
+              if (imgRef.current.decode) {
+                imgRef.current.decode().catch(() => {});  // Ignore decode errors
+              }
             }
             
             // Handle events from Python (ALL event types)
             if (metadata.events && metadata.events.length > 0) {
               metadata.events.forEach((event: any) => {
+                // Get schedule status from event (if available)
+                const hasSchedule = event.has_schedule === true || (event.schedule !== null && event.schedule !== undefined);
+                const isValidSchedule = event.is_valid_schedule !== undefined 
+                  ? event.is_valid_schedule 
+                  : (hasSchedule && event.schedule?.isValidSchedule !== false);
+                
                 const eventLog: DetectionLog = {
                   id: `event-${Date.now()}-${Math.random()}`,
                   name: event.name,
@@ -149,7 +169,9 @@ const LiveVideo: React.FC = () => {
                   type: event.type,
                   totalMinutes: event.total_minutes,
                   absenceMinutes: event.absence_minutes,
-                  details: ""
+                  details: "",
+                  has_schedule: hasSchedule,
+                  is_valid_schedule: isValidSchedule
                 };
 
                 // Handle ALL event types
@@ -187,8 +209,8 @@ const LiveVideo: React.FC = () => {
             const rawDetections = metadata.faces || [];
             
             // Scale bounding boxes from frame resolution to displayed video size
-            const frameWidth = metadata.frame_width || 1280;  // Default to 1280 if not provided
-            const frameHeight = metadata.frame_height || 720;  // Default to 720 if not provided
+            const frameWidth = metadata.frame_width || 1280;  // Default to 1280 (720p) if not provided - optimized for smooth streaming
+            const frameHeight = metadata.frame_height || 720;  // Default to 720 (720p) if not provided - optimized for smooth streaming
             
             // Scale boxes to match displayed video size
             const currentDetections = rawDetections.map((face: FaceDetection) => {
@@ -288,15 +310,11 @@ const LiveVideo: React.FC = () => {
                 activeFaces.push(smoothedFace);
               });
 
-              // Use flushSync only for critical changes (new faces or removed faces), otherwise normal update
-              if (hasNewFaces || facesToRemove.length > 0) {
+              // ⚡ INSTANT UPDATE: Always use flushSync for immediate display (especially for distant faces)
+              // This ensures boxes appear instantly without any delay
                 flushSync(() => {
                   setFaces(activeFaces);
                 });
-              } else {
-                // Normal update for existing faces (just position updates)
-                setFaces(activeFaces);
-              }
             }
             
             // Log new face detections (not events) - with 2 minute throttling
@@ -314,6 +332,12 @@ const LiveVideo: React.FC = () => {
                 
                 // Log if first time detected OR if 2 minutes have passed since last log
                 if (!previousNames.has(name) || timeSinceLastLog >= DETECTION_LOG_INTERVAL_MS) {
+                  // Determine schedule status for log color (same as box color)
+                  const hasSchedule = face.has_schedule === true || (face.session && face.session.schedule !== null && face.session.schedule !== undefined);
+                  const isValidSchedule = face.is_valid_schedule !== undefined 
+                    ? face.is_valid_schedule 
+                    : (hasSchedule && face.session?.schedule?.isValidSchedule !== false);
+                  
                   const newLog: DetectionLog = {
                     id: `${Date.now()}-${Math.random()}`,
                     name: name,
@@ -321,7 +345,9 @@ const LiveVideo: React.FC = () => {
                     cameraName: currentCameraName,
                     score: face.score,
                     type: 'detection',
-                    details: face.session ? `Total time: ${face.session.total_minutes.toFixed(1)} min` : undefined
+                    details: face.session ? `Total time: ${face.session.total_minutes.toFixed(1)} min` : undefined,
+                    has_schedule: hasSchedule,
+                    is_valid_schedule: isValidSchedule
                   };
                   
                   setDetectionLogs(prev => [...prev, newLog]);
@@ -423,23 +449,26 @@ const LiveVideo: React.FC = () => {
     };
   }, [selectedCamera, currentCameraName]);
 
-  // Optimized canvas rendering with requestAnimationFrame for instant updates
+  // 🎨 SMOOTH ANIMATION LOOP - 60fps continuous box interpolation
   useEffect(() => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
     if (!canvas || !img) return;
 
-    // Wait for image to load, but use requestAnimationFrame for immediate updates
-    const drawFrame = () => {
-      if (!img.complete) {
-        requestAnimationFrame(drawFrame);
+    // Store displayed boxes for smooth interpolation
+    const displayedBoxes = new Map<string, [number, number, number, number]>();
+    let isRunning = true;
+
+    const animate = () => {
+      if (!isRunning) return;
+
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (!ctx || !img.complete) {
+        animationFrameRef.current = requestAnimationFrame(animate);
         return;
       }
 
-      const ctx = canvas.getContext("2d", { alpha: false }); // Disable alpha for better performance
-      if (!ctx) return;
-
-      // Update canvas size only if changed (reduces unnecessary redraws)
+      // Update canvas size only if changed
       const newWidth = img.naturalWidth || 640;
       const newHeight = img.naturalHeight || 480;
       if (canvas.width !== newWidth || canvas.height !== newHeight) {
@@ -447,54 +476,108 @@ const LiveVideo: React.FC = () => {
         canvas.height = newHeight;
       }
 
-      // Clear canvas immediately
+      // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // Only draw if faces exist
-      if (faces.length === 0) return;
-
-      // Optimize rendering settings
+      // Draw faces with smooth interpolation
+      if (faces.length > 0) {
       ctx.lineWidth = 3;
       ctx.font = "bold 18px Arial";
       ctx.textBaseline = "top";
 
-      // Batch similar operations
       faces.forEach((f) => {
-        const [x, y, w, h] = f.box;
+          const faceKey = f.name || "Unknown";
+          const targetBox = f.box;
+          const currentBox = displayedBoxes.get(faceKey);
+
+          // ⚡ ULTRA-SMOOTH INTERPOLATION - Optimized for zero lag streaming
+          // Higher speed (0.80) = faster response = less lag, still smooth
+          const LERP_SPEED = 0.80; // Fast interpolation for zero lag (was 0.60)
+          
+          let displayBox: [number, number, number, number];
+          if (!currentBox) {
+            // New face - show IMMEDIATELY (no delay)
+            displayBox = targetBox;
+          } else {
+            // Existing face - fast interpolation (almost instant)
+            displayBox = [
+              currentBox[0] + (targetBox[0] - currentBox[0]) * LERP_SPEED,
+              currentBox[1] + (targetBox[1] - currentBox[1]) * LERP_SPEED,
+              currentBox[2] + (targetBox[2] - currentBox[2]) * LERP_SPEED,
+              currentBox[3] + (targetBox[3] - currentBox[3]) * LERP_SPEED,
+            ];
+          }
+          
+          // Store for next frame
+          displayedBoxes.set(faceKey, displayBox);
+
+          const [x, y, w, h] = displayBox;
+
+          // Determine box color based on schedule (match log color)
+          // Green: Within scheduled time frame (isValidSchedule === true)
+          // Yellow: Outside time frame or no schedule
+          const hasSchedule = f.has_schedule === true || (f.session && f.session.schedule !== null && f.session.schedule !== undefined);
+        const isValidSchedule = f.is_valid_schedule !== undefined 
+          ? f.is_valid_schedule 
+          : (hasSchedule && f.session?.schedule?.isValidSchedule !== false);
         
-        // Determine box color based on schedule status
-        const hasSchedule = f.has_schedule || (f.session && f.session.schedule !== null);
-        const boxColor = hasSchedule ? "#00ff00" : "#ffff00";  // Green if has schedule, Yellow if not
-        const bgColor = hasSchedule ? "rgba(0, 255, 0, 0.8)" : "rgba(255, 255, 0, 0.8)";
+          // Green if valid schedule (within time frame), Yellow if no schedule or outside time frame
+          const boxColor = (isValidSchedule && hasSchedule) ? "#00ff00" : "#ffff00";
+          const bgColor = (isValidSchedule && hasSchedule) ? "rgba(0, 255, 0, 0.85)" : "rgba(255, 255, 0, 0.85)";
         
-        // Draw box border
+          // Draw rounded box border for modern look
         ctx.strokeStyle = boxColor;
-        ctx.strokeRect(x, y, w, h);
+          ctx.lineWidth = 3;
+          ctx.strokeRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
         
         // Draw name label
         const name = f.name || "Unknown";
         const textMetrics = ctx.measureText(name);
-        const textHeight = 20;
-        const padding = 5;
+          const textHeight = 22;
+          const padding = 6;
         
         // Draw background for text
         ctx.fillStyle = bgColor;
         ctx.fillRect(
-          x,
-          y - textHeight - padding,
+            Math.round(x),
+            Math.round(y - textHeight - padding),
           textMetrics.width + padding * 2,
           textHeight + padding
         );
         
         // Draw text
         ctx.fillStyle = "#000";
-        ctx.fillText(name, x + padding, y - padding);
+          ctx.font = "bold 16px Arial";
+          ctx.fillText(name, Math.round(x + padding), Math.round(y - textHeight + 2));
+        });
+
+        // Clean up old entries not in current faces
+        const currentNames = new Set(faces.map(f => f.name || "Unknown"));
+        displayedBoxes.forEach((_, key) => {
+          if (!currentNames.has(key)) {
+            displayedBoxes.delete(key);
+          }
       });
+      } else {
+        // No faces - clear displayed boxes
+        displayedBoxes.clear();
+      }
+
+      // Continue animation loop at 60fps
+      animationFrameRef.current = requestAnimationFrame(animate);
     };
 
-    // Use requestAnimationFrame for smooth, immediate rendering
-    requestAnimationFrame(drawFrame);
-  }, [faces, imgRef.current?.src]);
+    // Start animation loop
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    // Cleanup
+    return () => {
+      isRunning = false;
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [faces]);
 
   const handleCameraChange = (event: any) => {
     const newCamera = event.target.value;
@@ -544,8 +627,25 @@ const LiveVideo: React.FC = () => {
     }
   };
 
-  const getLogColor = (type: string) => {
-    switch (type) {
+  const getLogColor = (log: DetectionLog) => {
+    // For detection logs, use schedule status to determine color (match box color)
+    if (log.type === 'detection') {
+      const hasSchedule = log.has_schedule === true;
+      const isValidSchedule = log.is_valid_schedule !== undefined 
+        ? log.is_valid_schedule 
+        : hasSchedule;
+      
+      // Green: Has valid schedule (within time frame)
+      // Yellow: No schedule or outside time frame
+      if (isValidSchedule && hasSchedule) {
+        return { bg: '#e8f5e9', border: '#4caf50' }; // Green
+      } else {
+        return { bg: '#fff9c4', border: '#fbc02d' }; // Yellow
+      }
+    }
+    
+    // For other log types, use original color scheme
+    switch (log.type) {
       case 'left':
       case 'time_out':
         return { bg: '#ffebee', border: '#f44336' };
@@ -596,26 +696,28 @@ const LiveVideo: React.FC = () => {
         <Box sx={{ display: "flex", gap: 2, alignItems: "center", backgroundColor: "#f5f5f5", padding: "8px 16px", borderRadius: "4px" }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Box sx={{ width: 20, height: 20, backgroundColor: "#00ff00", border: "2px solid #00ff00" }} />
-            <Typography variant="body2"><strong>Green:</strong> Has scheduled class</Typography>
+            <Typography variant="body2"><strong>Green:</strong> Within scheduled time frame</Typography>
           </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Box sx={{ width: 20, height: 20, backgroundColor: "#ffff00", border: "2px solid #ffff00" }} />
-            <Typography variant="body2"><strong>Yellow:</strong> No scheduled class</Typography>
+            <Typography variant="body2"><strong>Yellow:</strong> Outside time frame or no schedule</Typography>
           </Box>
         </Box>
       </Box>
 
-      <Box sx={{ position: "relative", width: "100%", maxWidth: "800px", margin: "0 auto" }}>
+      <Box sx={{ position: "relative", width: "100%", maxWidth: "2560px", margin: "0 auto" }}>
         <img
           ref={imgRef}
           alt="Live Stream"
           style={{
             width: "100%",
-            height: "70vh",
-            objectFit: "cover",
+            height: "auto",
+            maxHeight: "85vh",
+            objectFit: "contain",  // Show full image without cropping
             borderRadius: "10px",
             boxShadow: "0px 4px 10px rgba(0,0,0,0.2)",
             backgroundColor: "#000",
+            imageRendering: "smooth",  // Smooth rendering for maximum clarity
           }}
         />
         <canvas
@@ -625,7 +727,7 @@ const LiveVideo: React.FC = () => {
             top: 0,
             left: 0,
             width: "100%",
-            height: "70vh",
+            height: "100%",  // Match image height exactly
             pointerEvents: "none",
             borderRadius: "10px",
           }}
@@ -697,7 +799,7 @@ const LiveVideo: React.FC = () => {
             </Typography>
           ) : (
             [...detectionLogs].reverse().map((log) => {
-              const colors = getLogColor(log.type);
+              const colors = getLogColor(log);
               return (
                 <Box
                   key={log.id}

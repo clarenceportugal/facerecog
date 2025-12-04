@@ -6,6 +6,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import { useFacultyContext } from "../../context/FacultyContext";
+import { API_BASE_URL } from "../../utils/api";
 import {
   Box,
   Typography,
@@ -157,11 +158,17 @@ const FacultyInfo: React.FC = () => {
     }
 
     try {
+      console.log('[ADD FACULTY] Sending request to:', `${API_BASE_URL}/api/auth/faculty`);
+      console.log('[ADD FACULTY] Data:', newFaculty);
+      
       const res = await axios.post(
-        "https://eduvision-dura.onrender.com/api/auth/faculty",
+        `${API_BASE_URL}/api/auth/faculty`,
         newFaculty
       );
+      
+      console.log('[ADD FACULTY] Success:', res.data);
       setFacultyList([...facultyList, res.data]);
+      
       Swal.fire({
         icon: "success",
         title: "Success",
@@ -170,11 +177,13 @@ const FacultyInfo: React.FC = () => {
       handleCloseModal();
     } catch (error: any) {
       handleCloseModal(false);
-      console.error("Error adding faculty account:", error);
+      console.error("[ADD FACULTY] Error:", error);
+      console.error("[ADD FACULTY] Error response:", error.response?.data);
+      
       Swal.fire({
         icon: "error",
         title: "Error",
-        text: error.response?.data?.message || "Failed to add faculty account.",
+        text: error.response?.data?.message || "Failed to add faculty account. Check console for details.",
         timer: 2000,
         timerProgressBar: true,
         willClose: () => {
@@ -197,7 +206,8 @@ const FacultyInfo: React.FC = () => {
 
     if (confirmation.isConfirmed) {
       try {
-        await axios.delete(`https://eduvision-dura.onrender.com/api/auth/faculty/${id}`);
+        console.log('[DELETE FACULTY] Deleting faculty ID:', id);
+        await axios.delete(`${API_BASE_URL}/api/auth/faculty/${id}`);
         setFacultyList(facultyList.filter((faculty) => faculty._id !== id));
         if (selectedFaculty === id) {
           setSelectedFaculty(null);

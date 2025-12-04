@@ -5,12 +5,17 @@ import Schedule from "../models/Schedule";
 import Log from "../models/AttendanceLogs";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import { 
+  UserService, 
+  ScheduleService, 
+  LogService 
+} from "../services/dataService";
+import { isOfflineMode } from "../utils/systemMode";
 
-
-dotenv.config();
+// dotenv is loaded by systemMode.ts, app.ts, and server.ts - no need to load again here
 const router = express.Router();
 
-// UPDATE CREDENTIALS ROUTE
+// UPDATE CREDENTIALS ROUTE - WORKS OFFLINE
 router.put(
   "/update-credentials/:id",
   async (req: Request, res: Response): Promise<void> => {
@@ -18,32 +23,31 @@ router.put(
       const { id } = req.params;
       const { username, password } = req.body;
 
-      const faculty = await User.findById(id);
+      // Use data service (works both online and offline)
+      const faculty = await UserService.findById(id);
       if (!faculty) {
         res.status(404).json({ message: "User not found" });
         return;
       }
 
       // Check if username is already taken by someone else
-      const existingUser = await User.findOne({ username, _id: { $ne: id } });
-      if (existingUser) {
+      const existingUser = await UserService.findByUsername(username);
+      if (existingUser && existingUser._id !== id && existingUser.id !== id) {
         res.status(400).json({ message: "Username is already taken" });
         return;
       }
 
-      // Hash the password before saving
-      const hashedPassword = await bcrypt.hash(password, 10);
+      // Update user
+      const updated = await UserService.update(id, {
+        username,
+        password, // Will be hashed by UserService.update
+        status: "active",
+      });
 
-      faculty.username = username;
-      faculty.password = hashedPassword;
-      faculty.status = "active";
-
-      // ✅ Ensure role stays lowercase & matches your union type
-      if (faculty.role) {
-        faculty.role = faculty.role.toLowerCase() as any; // cast back to UserRole
+      if (!updated) {
+        res.status(500).json({ message: "Failed to update credentials" });
+        return;
       }
-
-      await faculty.save();
 
       res.json({
         message: "Credentials updated successfully",
@@ -386,16 +390,11 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
     }
   });
 
-  // UPDATE LOG STATUS AND REMARKS
+  // UPDATE LOG STATUS AND REMARKS - WORKS OFFLINE
   router.put("/logs/:logId", async (req: Request, res: Response): Promise<void> => {
     try {
       const { logId } = req.params;
       const { status, remarks } = req.body;
-
-      if (!mongoose.Types.ObjectId.isValid(logId)) {
-        res.status(400).json({ message: "Invalid log ID" });
-        return;
-      }
 
       // Validate status
       const validStatuses = ["present", "late", "absent", "excuse", "Returned", "Left early"];
@@ -406,23 +405,27 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         return;
       }
 
-      const log = await Log.findById(logId);
+      // Use data service (works both online and offline)
+      const log = await LogService.findById(logId);
       if (!log) {
         res.status(404).json({ message: "Log not found" });
         return;
       }
 
-      // Update status if provided
+      // Update log
+      const updates: any = {};
       if (status) {
-        log.status = status as any;
+        updates.status = status;
       }
-
-      // Update remarks if provided
       if (remarks !== undefined) {
-        log.remarks = remarks;
+        updates.remarks = remarks;
       }
 
-      await log.save();
+      const updated = await LogService.update(logId, updates);
+      if (!updated) {
+        res.status(500).json({ message: "Failed to update log" });
+        return;
+      }
 
       console.log(`[UPDATE-LOG] Updated log ${logId}: status=${status || 'unchanged'}, remarks=${remarks !== undefined ? 'updated' : 'unchanged'}`);
 
@@ -547,7 +550,7 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
   });
   
   
-  // LOG TIME IN FOR FACE RECOGNITION (called by Python recognizer)
+  // LOG TIME IN FOR FACE RECOGNITION (called by Python recognizer) - WORKS OFFLINE
   router.post("/log-time-in", async (req: Request, res: Response): Promise<void> => {
     try {
       const { 
@@ -559,9 +562,10 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         isLate      // boolean
       } = req.body;
       
-      console.log(`[API] Logging ${logType || 'TIME IN'} for: ${instructorName} (Late: ${isLate})`);
+      console.log(`[API] Logging ${logType || 'TIME IN'} for: ${instructorName} (Late: ${isLate}) [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
       
-      const schedule = await Schedule.findById(scheduleId);
+      // Use data service (works both online and offline)
+      const schedule = await ScheduleService.findById(scheduleId);
       if (!schedule) {
         console.log('[API] ❌ Schedule not found');
         res.status(404).json({ message: 'Schedule not found' });
@@ -572,13 +576,9 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       const today = new Date(timestamp);
       const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD format
       
-      const existingLog = await Log.findOne({
-        schedule: scheduleId,
-        date: todayStr,
-        timeIn: { $exists: true }
-      });
+      const existingLog = await LogService.findByScheduleAndDate(scheduleId, todayStr);
 
-      if (existingLog) {
+      if (existingLog && existingLog.timeIn) {
         console.log('[API] ℹ️ Already logged in today');
         res.json({ message: 'Already logged in today', timeLog: existingLog });
         return;
@@ -595,12 +595,9 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       } else {
         remarks = 'On time';
       }
-
-      // Get course from schedule
-      const populatedSchedule = await Schedule.findById(scheduleId).populate('section');
       
-      // Create time log
-      const timeLog = new Log({
+      // Create time log using data service
+      const timeLog = await LogService.create({
         date: todayStr,
         schedule: scheduleId,
         timeIn: timeInDate.toTimeString().slice(0, 8), // HH:MM:SS
@@ -608,26 +605,25 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         remarks: remarks,
         course: schedule.courseCode || 'N/A'
       });
-
-      await timeLog.save();
       
       const emoji = isLate ? '⚠️' : '✅';
-      console.log(`[API] ${emoji} ${logType || 'TIME IN'} logged successfully - Status: ${status}`);
+      console.log(`[API] ${emoji} ${logType || 'TIME IN'} logged successfully - Status: ${status} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
       
-      res.json({ success: true, timeLog });
+      res.json({ success: true, timeLog, mode: isOfflineMode() ? 'offline' : 'online' });
     } catch (error: any) {
       console.error('[API] Error logging time in:', error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // LOG TIME OUT FOR FACE RECOGNITION (called by Python recognizer)
+  // LOG TIME OUT FOR FACE RECOGNITION (called by Python recognizer) - WORKS OFFLINE
   router.post("/log-time-out", async (req: Request, res: Response): Promise<void> => {
     try {
       const { instructorName, scheduleId, timestamp, totalMinutes } = req.body;
-      console.log(`[API] Logging TIME OUT for: ${instructorName}`);
+      console.log(`[API] Logging TIME OUT for: ${instructorName} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
       
-      const schedule = await Schedule.findById(scheduleId);
+      // Use data service (works both online and offline)
+      const schedule = await ScheduleService.findById(scheduleId);
       if (!schedule) {
         console.log('[API] ❌ Schedule not found');
         res.status(404).json({ message: 'Schedule not found' });
@@ -638,10 +634,7 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       const today = new Date(timestamp);
       const todayStr = today.toISOString().slice(0, 10);
 
-      const timeLog = await Log.findOne({
-        schedule: scheduleId,
-        date: todayStr
-      });
+      const timeLog = await LogService.findByScheduleAndDate(scheduleId, todayStr);
 
       if (!timeLog) {
         console.log('[API] ❌ Time in log not found');
@@ -655,30 +648,99 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       const diffMinutes = (timeOutDate.getTime() - scheduleEndTime.getTime()) / (1000 * 60);
       
       let remarks = timeLog.remarks || '';
+      let status = timeLog.status;
       
       if (diffMinutes < -15) {
-        timeLog.status = 'Left early' as any;
+        status = 'Left early';
         remarks += (remarks ? ' | ' : '') + `Left ${Math.floor(Math.abs(diffMinutes))} minutes early`;
       }
       
-      timeLog.timeout = timeOutDate.toTimeString().slice(0, 8);
-      timeLog.remarks = remarks;
+      // Update log using data service
+      await LogService.update(timeLog._id || timeLog.id || '', {
+        timeout: timeOutDate.toTimeString().slice(0, 8),
+        remarks: remarks,
+        status: status
+      });
 
-      await timeLog.save();
-      console.log(`[API] ✅ TIME OUT logged successfully - Total: ${totalMinutes} min`);
-      res.json({ success: true, timeLog });
+      console.log(`[API] ✅ TIME OUT logged successfully - Total: ${totalMinutes} min [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      res.json({ success: true, timeLog: { ...timeLog, timeout: timeOutDate.toTimeString().slice(0, 8), remarks }, mode: isOfflineMode() ? 'offline' : 'online' });
     } catch (error: any) {
       console.error('[API] Error logging time out:', error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // GET CURRENT SCHEDULE FOR FACE RECOGNITION (called by Python recognizer)
+  // GET ALL SCHEDULES FOR FACE RECOGNITION CACHE (called by Python recognizer) - WORKS OFFLINE
+  router.get("/all-schedules-for-recognition", async (req: Request, res: Response): Promise<void> => {
+    try {
+      console.log(`[API] Fetching schedules for recognition [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      
+      // Use data service (works both online and offline)
+      const allSchedules = await ScheduleService.findAll();
+      
+      // Filter active schedules (within current semester dates)
+      const currentDateStr = new Date().toISOString().slice(0, 10);
+      const schedules = allSchedules.filter(s => 
+        s.semesterStartDate <= currentDateStr && s.semesterEndDate >= currentDateStr
+      );
+      
+      // Format response
+      const formattedSchedules = schedules.map(s => {
+        const instructor = typeof s.instructor === 'object' ? s.instructor : null;
+        return {
+          _id: s._id || s.id,
+          courseTitle: s.courseTitle,
+          courseCode: s.courseCode,
+          room: s.room,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          days: s.days,
+          semesterStartDate: s.semesterStartDate,
+          semesterEndDate: s.semesterEndDate,
+          instructor: instructor ? {
+            first_name: (instructor as any).first_name,
+            last_name: (instructor as any).last_name
+          } : null
+        };
+      });
+      
+      console.log(`[API] ✅ Found ${formattedSchedules.length} active schedules [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      res.json(formattedSchedules);
+    } catch (error: any) {
+      console.error('[API] ❌ Error fetching all schedules:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // LEGACY: Original route (kept for backward compatibility)
+  router.get("/all-schedules-for-recognition-legacy", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const currentDateStr = new Date().toISOString().slice(0, 10);
+      
+      // Fetch all active schedules (within current semester dates)
+      const schedules = await Schedule.find({
+        semesterStartDate: { $lte: currentDateStr },
+        semesterEndDate: { $gte: currentDateStr }
+      })
+        .populate('instructor', 'first_name last_name')
+        .populate('section', 'course section block')
+        .lean();
+      
+      console.log(`[API] Fetched ${schedules.length} active schedules for cache`);
+      
+      res.json(schedules);
+    } catch (error) {
+      console.error('[API] ❌ Error fetching all schedules:', error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // GET CURRENT SCHEDULE FOR FACE RECOGNITION (called by Python recognizer) - WORKS OFFLINE
   router.post("/get-current-schedule", async (req: Request, res: Response): Promise<void> => {
     try {
-      const { instructorName } = req.body;
-      console.log(`[API] === GET CURRENT SCHEDULE REQUEST ===`);
-      console.log(`[API] Received instructor name: "${instructorName}"`);
+      const { instructorName, roomName, cameraId } = req.body;
+      console.log(`[API] === GET CURRENT SCHEDULE REQUEST [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}] ===`);
+      console.log(`[API] Received instructor name: "${instructorName}", room: "${roomName || 'not provided'}", cameraId: "${cameraId || 'not provided'}"`);
 
       // Parse "Larbuiq, Kram" into first_name and last_name
       const parts = instructorName.split(',').map((s: string) => s.trim());
@@ -694,24 +756,22 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         lastName = spaceParts.slice(1).join(' ') || '';
       }
 
-      console.log(`[API] Searching User collection for first_name: "${firstName}", last_name: "${lastName}"`);
+      console.log(`[API] Searching for instructor: first_name: "${firstName}", last_name: "${lastName}"`);
       
-      // Find the instructor in the User collection
-      const instructor = await User.findOne({
-        first_name: { $regex: new RegExp(`^${firstName}$`, 'i') },
-        last_name: { $regex: new RegExp(`^${lastName}$`, 'i') }
-      });
+      // Find the instructor using data service (works both online and offline)
+      const allInstructors = await UserService.findByRole('instructor');
+      const instructor = allInstructors.find(u => 
+        u.first_name.toLowerCase() === firstName.toLowerCase() &&
+        u.last_name.toLowerCase() === lastName.toLowerCase()
+      );
 
       if (!instructor) {
         console.log(`[API] ❌ Instructor not found: ${instructorName}`);
-        console.log(`[API] Searched for: first_name="${firstName}", last_name="${lastName}"`);
-        
-        // Try to find any users to help with debugging
-        const allUsers = await User.find({ role: 'instructor' }).limit(5);
-        console.log(`[API] Sample instructors in database:`, allUsers.map(u => `${u.first_name} ${u.last_name}`));
+        console.log(`[API] Sample instructors in database:`, allInstructors.slice(0, 5).map(u => `${u.first_name} ${u.last_name}`));
         
         res.json({ 
           schedule: null,
+          mode: isOfflineMode() ? 'offline' : 'online',
           debug: {
             searchedFor: { firstName, lastName, originalName: instructorName },
             instructorNotFound: true
@@ -720,61 +780,40 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         return;
       }
 
-      console.log(`[API] ✅ Found instructor: ${instructor.first_name} ${instructor.last_name} (${instructor._id})`);
+      const instructorId = instructor._id || instructor.id;
+      console.log(`[API] ✅ Found instructor: ${instructor.first_name} ${instructor.last_name} (${instructorId})`);
 
       // Get current time and day
       const now = new Date();
       const currentHours = now.getHours();
       const currentMinutes = currentHours * 60 + now.getMinutes();
       const currentTime = `${String(currentHours).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][now.getDay()];
+      const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+      const dayOfWeek: string = dayNames[now.getDay()];
       const currentDateStr = now.toISOString().slice(0, 10);
 
       console.log(`[API] Current time: ${currentTime} (${currentMinutes} minutes), Current day: ${dayOfWeek}`);
 
-      // Build query object for the days field
-      const daysQuery: any = {};
-      daysQuery[`days.${dayOfWeek}`] = true;
+      // Get schedules for this instructor using data service
+      const instructorSchedules = await ScheduleService.findByInstructor(instructorId || '');
+      
+      // Filter active schedules (within semester dates and active on current day)
+      const activeSchedules: typeof instructorSchedules = instructorSchedules.filter(s => {
+        const withinDates = s.semesterStartDate <= currentDateStr && s.semesterEndDate >= currentDateStr;
+        const days = s.days as { [key: string]: boolean };
+        const activeToday = days && days[dayOfWeek] === true;
+        return withinDates && activeToday;
+      });
 
-      console.log(`[API] Querying schedules with instructor: ${instructor._id}, day: ${dayOfWeek}`);
+      console.log(`[API] Found ${activeSchedules.length} active schedules for today`);
 
-      // Find schedule for this instructor, current day, within semester dates
-      let schedule = await Schedule.findOne({
-        instructor: instructor._id,
-        ...daysQuery,
-        semesterStartDate: { $lte: currentDateStr },
-        semesterEndDate: { $gte: currentDateStr }
-      }).populate('instructor section');
-
-      console.log(`[API] Initial query returned: ${schedule ? 'Found' : 'Not found'}`);
-
-      // Fallback: manually filter if no results
-      if (!schedule) {
-        console.log(`[API] Trying fallback query (manual day filtering)...`);
-        const allSchedules = await Schedule.find({
-          instructor: instructor._id,
-          semesterStartDate: { $lte: currentDateStr },
-          semesterEndDate: { $gte: currentDateStr }
-        }).populate('instructor section');
-
-        console.log(`[API] Found ${allSchedules.length} schedules for this instructor (any day)`);
-        
-        schedule = allSchedules.find((s: any) => {
-          const days = s.days || {};
-          const isActiveToday = days[dayOfWeek] === true;
-          console.log(`[API] Schedule ${s._id}: days=${JSON.stringify(days)}, ${dayOfWeek}=${isActiveToday}`);
-          return isActiveToday;
-        }) || null;
-
-        console.log(`[API] Manual filter result: ${schedule ? 'Found' : 'Still not found'}`);
-      }
-
-      if (!schedule) {
-        console.log(`[API] ❌ No schedule found for ${instructorName} on ${dayOfWeek} at ${currentTime}`);
+      if (activeSchedules.length === 0) {
+        console.log(`[API] ❌ No schedule found for ${instructorName} on ${dayOfWeek}`);
         res.json({ 
           schedule: null,
+          mode: isOfflineMode() ? 'offline' : 'online',
           debug: {
-            instructor: { firstName, lastName, id: instructor._id },
+            instructor: { firstName, lastName, id: instructorId },
             currentTime,
             currentDay: dayOfWeek,
             noScheduleFound: true
@@ -783,44 +822,32 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         return;
       }
 
-      // Parse schedule start and end times
-      const [startH, startM] = schedule.startTime.split(':').map(Number);
-      const [endH, endM] = schedule.endTime.split(':').map(Number);
-      const startMinutes = startH * 60 + startM;
-      const endMinutes = endH * 60 + endM;
+      // Find schedule that matches current time
+      let schedule: typeof activeSchedules[0] | undefined = activeSchedules.find((s: typeof activeSchedules[0]) => {
+        const [startH, startM] = s.startTime.split(':').map(Number);
+        const [endH, endM] = s.endTime.split(':').map(Number);
+        const startMinutes = startH * 60 + startM;
+        const endMinutes = endH * 60 + endM;
+        return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+      });
 
-      console.log(`[API] Schedule time range: ${schedule.startTime} (${startMinutes}min) - ${schedule.endTime} (${endMinutes}min)`);
-      console.log(`[API] Current time: ${currentTime} (${currentMinutes}min)`);
-      console.log(`[API] In range: ${currentMinutes >= startMinutes && currentMinutes <= endMinutes}`);
+      if (!schedule) {
+        // No schedule at current time, return first schedule found
+        schedule = activeSchedules[0];
+        const [startH, startM] = schedule.startTime.split(':').map(Number);
+        const [endH, endM] = schedule.endTime.split(':').map(Number);
+        const startMinutes = startH * 60 + startM;
+        const endMinutes = endH * 60 + endM;
 
-      // Check if current time is within schedule time
-      if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) {
-        console.log(`[API] ✅ Active schedule found for ${instructorName}`);
-        
-        // Ensure days object is properly formatted
-        const scheduleObj: any = schedule.toObject();
-        if (!scheduleObj.days || Object.keys(scheduleObj.days).length === 0) {
-          scheduleObj.days = {
-            mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false
-          };
-        }
-
-        res.json({ 
-          schedule: scheduleObj,
-          debug: {
-            instructor: { firstName, lastName, id: instructor._id },
-            currentTime,
-            currentDay: dayOfWeek,
-            scheduleFound: true,
-            timeInRange: true
-          }
-        });
-      } else {
         console.log(`[API] ⏰ Schedule found but not active at current time`);
         res.json({ 
           schedule: null,
+          isValidSchedule: false,
+          timeMatch: false,
+          roomMatch: null,
+          mode: isOfflineMode() ? 'offline' : 'online',
           debug: {
-            instructor: { firstName, lastName, id: instructor._id },
+            instructor: { firstName, lastName, id: instructorId },
             currentTime,
             currentDay: dayOfWeek,
             scheduleFound: true,
@@ -828,10 +855,67 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
             scheduleTime: `${schedule.startTime}-${schedule.endTime}`
           }
         });
+        return;
       }
+
+      console.log(`[API] ✅ Active schedule found for ${instructorName} - Time matches`);
+      
+      // If roomName is provided, validate it matches the schedule room
+      let roomMatch = null;
+      let isValidSchedule = true;
+      
+      if (roomName) {
+        const scheduleRoom = (schedule.room || "").trim().toLowerCase();
+        const providedRoom = roomName.trim().toLowerCase();
+        
+        // Check if rooms match (exact match or partial match)
+        roomMatch = scheduleRoom === providedRoom ||
+                   scheduleRoom.includes(providedRoom) ||
+                   providedRoom.includes(scheduleRoom);
+        
+        if (!roomMatch) {
+          console.log(`[API] ⚠️ Schedule time matches but room does not match. Expected: "${schedule.room}", Provided: "${roomName}"`);
+          isValidSchedule = false;
+        } else {
+          console.log(`[API] ✅ Room matches: "${schedule.room}"`);
+        }
+      }
+      
+      // Ensure days object is properly formatted
+      const scheduleObj: any = { ...schedule };
+      if (!scheduleObj.days || Object.keys(scheduleObj.days).length === 0) {
+        scheduleObj.days = {
+          mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false
+        };
+      }
+      
+      // Add validation flags to schedule object
+      scheduleObj.isValidSchedule = isValidSchedule;
+      scheduleObj.timeMatch = true;
+      scheduleObj.roomMatch = roomMatch;
+      scheduleObj.roomValidated = roomName ? true : false;
+
+      // Return schedule even if room doesn't match (for backward compatibility)
+      res.json({ 
+        schedule: scheduleObj,
+        isValidSchedule: isValidSchedule,
+        timeMatch: true,
+        roomMatch: roomMatch,
+        mode: isOfflineMode() ? 'offline' : 'online',
+        debug: {
+          instructor: { firstName, lastName, id: instructorId },
+          currentTime,
+          currentDay: dayOfWeek,
+          scheduleFound: true,
+          timeInRange: true,
+          roomValidated: roomName ? true : false,
+          expectedRoom: schedule.room,
+          providedRoom: roomName || null
+        }
+      });
     } catch (error) {
       console.error('[API] ❌ Error in get-current-schedule:', error);
-      res.status(500).json({ schedule: null, error: String(error) });
+      res.status(500).json({ schedule: null, error: String(error), mode: isOfflineMode() ? 'offline' : 'online' });
     }
   });
 

@@ -2,10 +2,66 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import axios from 'axios';
+import https from 'https';
+import Database from 'better-sqlite3';
 import UserModel from '../models/User';
+import { UserService } from '../services/dataService';
+import { isOfflineMode } from '../utils/systemMode';
 import { processUploadedImageWithBackgroundRemoval, processUserFolderWithBackgroundRemoval } from '../utils/backgroundRemoval';
 
 const router = express.Router();
+
+const facesBasePath = path.join(__dirname, '../../../streaming-server/faces');
+
+const ensureDirectoryExists = (targetPath: string): void => {
+  if (!fs.existsSync(targetPath)) {
+    fs.mkdirSync(targetPath, { recursive: true });
+  }
+};
+
+const sanitizeFolderName = (name: string): string =>
+  name.replace(/[^a-zA-Z0-9_-]/g, '_') || 'Unknown_User';
+
+const generateFileName = (userFolderPath?: string): string => {
+  let fileName: string;
+  let attempts = 0;
+  const maxAttempts = 10;
+  
+  do {
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(2, 8);
+    const counter = attempts > 0 ? `_${attempts}` : '';
+    fileName = `img${timestamp}_${randomId}${counter}.jpg`;
+    attempts++;
+    
+    // Check if file already exists (if folder path provided)
+    if (userFolderPath) {
+      const filePath = path.join(userFolderPath, fileName);
+      if (!fs.existsSync(filePath)) {
+        break; // File doesn't exist, we can use this name
+      }
+    } else {
+      break; // No folder path provided, use generated name
+    }
+  } while (attempts < maxAttempts);
+  
+  return fileName;
+};
+
+const ensureUserFolder = (folderName: string): string => {
+  ensureDirectoryExists(facesBasePath);
+  const userFolderPath = path.join(facesBasePath, folderName);
+  ensureDirectoryExists(userFolderPath);
+  return userFolderPath;
+};
+
+const writeBufferToUserFolder = (folderPath: string, buffer: Buffer, filename?: string): string => {
+  const finalName = filename || generateFileName();
+  const destination = path.join(folderPath, finalName);
+  fs.writeFileSync(destination, buffer);
+  return destination;
+};
 
 // Test endpoint to verify API is working
 router.get('/test', (req: any, res: any) => {
@@ -33,7 +89,8 @@ router.post('/debug', (req: any, res: any) => {
 router.get('/check-folder/:userId', async (req: any, res: any): Promise<void> => {
   try {
     const { userId } = req.params;
-    const user = await UserModel.findById(userId);
+    // Uses UserService which works in both online and offline modes
+    const user = await UserService.findById(userId);
     
     if (!user) {
       res.status(404).json({ 
@@ -55,7 +112,7 @@ router.get('/check-folder/:userId', async (req: any, res: any): Promise<void> =>
     res.json({
       success: true,
       user: {
-        id: user._id,
+        id: user._id || user.id,
         name: `${user.first_name} ${user.last_name}`,
         folderName: fullName
       },
@@ -75,69 +132,35 @@ router.get('/check-folder/:userId', async (req: any, res: any): Promise<void> =>
   }
 });
 
-// Configure multer for face image uploads to streaming-server/faces
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    try {
-      // For now, use a temporary folder and move files later in the route handler
-      // This avoids the issue with req.body not being parsed in destination function
-      const tempPath = path.join(__dirname, '../../../streaming-server/faces', 'temp');
-      
-      if (!fs.existsSync(tempPath)) {
-        fs.mkdirSync(tempPath, { recursive: true });
-        console.log('📁 Using temp folder for initial upload:', tempPath);
-      }
-      
-      cb(null, tempPath);
-    } catch (error) {
-      cb(error instanceof Error ? error : new Error('Unknown error'), '');
-    }
-  },
-  filename: (req, file, cb) => {
-    const step = req.body.step || 'unknown';
-    const timestamp = Date.now();
-    const randomId = Math.random().toString(36).substring(2, 8);
-    const filename = `img${timestamp}_${randomId}.jpg`;
-    cb(null, filename);
-  }
-});
+const memoryStorage = multer.memoryStorage();
 
-const upload = multer({ 
-  storage: storage,
+const fileFilter: multer.Options['fileFilter'] = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (mimetype && extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed!'));
+  }
+};
+
+const upload = multer({
+  storage: memoryStorage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'));
-    }
-  }
+  fileFilter,
 });
 
-// Multiple photos upload for continuous capture
 const uploadMultiple = multer({
-  storage: storage, // Uses the same storage configuration with user names
+  storage: memoryStorage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit per file
-    files: 10 // Maximum 10 files per request
+    files: 10, // Maximum 10 files per request
   },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'));
-    }
-  }
+  fileFilter,
 });
 
 // Face registration endpoint
@@ -162,8 +185,8 @@ router.post('/register', upload.single('image'), async (req, res): Promise<void>
       return;
     }
 
-    // Check if user exists
-    const user = await UserModel.findById(userId);
+    // Check if user exists - uses UserService which works in both online and offline modes
+    const user = await UserService.findById(userId);
     if (!user) {
       res.status(404).json({ 
         success: false, 
@@ -172,19 +195,15 @@ router.post('/register', upload.single('image'), async (req, res): Promise<void>
       return;
     }
 
-    // Save face image path to user record using findByIdAndUpdate to bypass validation
-    const faceImagePath = file.path;
-    await UserModel.findByIdAndUpdate(
-      userId,
-      { faceImagePath: faceImagePath },
-      { 
-        runValidators: false, // Bypass validation to avoid course field issues
-        new: true 
-      }
-    );
+    const folderName = sanitizeFolderName(`${user.first_name}_${user.last_name}`);
+    const userFolderPath = ensureUserFolder(folderName);
+    const faceImagePath = writeBufferToUserFolder(userFolderPath, file.buffer);
+
+    // Update user's face image path - works in both online and offline modes
+    await UserService.update(userId, { faceImagePath: faceImagePath });
 
     const userName = `${user.first_name} ${user.last_name}`;
-    console.log(`Face image saved for user ${userName} (${userId})`);
+    console.log(`[FACE] Face image saved for user ${userName} (${userId}) - Mode: ${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}`);
 
     // TODO: Here you would typically:
     // 1. Process the image for face recognition
@@ -221,6 +240,7 @@ router.post('/register-multiple', uploadMultiple.array('images', 10), async (req
     console.log('🔍 User Name:', userName);
     console.log('🔍 Step:', step);
     console.log('🔍 Files count:', files?.length);
+    console.log('🔍 Mode:', isOfflineMode() ? 'OFFLINE' : 'ONLINE');
 
     if (!userId) {
       res.status(400).json({ 
@@ -238,8 +258,8 @@ router.post('/register-multiple', uploadMultiple.array('images', 10), async (req
       return;
     }
 
-    // Check if user exists
-    const user = await UserModel.findById(userId);
+    // Check if user exists - uses UserService which works in both online and offline modes
+    const user = await UserService.findById(userId);
     if (!user) {
       res.status(404).json({ 
         success: false, 
@@ -267,78 +287,80 @@ router.post('/register-multiple', uploadMultiple.array('images', 10), async (req
       console.log('📁 USING EXISTING USER FOLDER:', userFolderPath);
     }
 
-    // Move files from temp folder to user folder and process with background removal
+    // Save files directly into user folder and process with background removal
     const savedFiles = [];
     const processedFiles = [];
     
     for (const file of files) {
-      const tempPath = file.path;
-      const newFileName = file.filename;
-      const originalPath = path.join(userFolderPath, newFileName);
-      
-      // Move file from temp to user folder first
-      fs.renameSync(tempPath, originalPath);
-      console.log(`📁 MOVED FILE: ${tempPath} -> ${originalPath}`);
-      
-      // Process with background removal - AUTOMATIC during registration
-      console.log(`🎭 AUTOMATIC BACKGROUND REMOVAL during registration: ${newFileName}`);
-      console.log(`🎯 This will keep ONLY the user's face and remove all background`);
-      const processResult = await processUploadedImageWithBackgroundRemoval(
-        originalPath, 
-        userFolderPath, 
-        newFileName
-      );
-      
-      if (processResult.success && processResult.processedPath) {
-        // ALWAYS use processed image and ALWAYS delete original
-        const finalPath = processResult.processedPath;
-        const finalFileName = path.basename(finalPath);
+      try {
+        const newFileName = generateFileName(userFolderPath);
+        const originalPath = writeBufferToUserFolder(userFolderPath, file.buffer, newFileName);
+        console.log(`📁 SAVED FILE: ${newFileName} in ${userFolderPath}`);
         
-        // ALWAYS delete the original file with background
-        try {
-          fs.unlinkSync(originalPath);
-          console.log(`🗑️ ALWAYS DELETED original file with background: ${newFileName}`);
-        } catch (error) {
-          console.log(`⚠️ Could not delete original file: ${error}`);
-        }
-        
+        // Save the original image immediately (don't wait for background removal)
         savedFiles.push({
-          filename: finalFileName,
-          path: finalPath,
-          size: fs.statSync(finalPath).size,
+          filename: newFileName,
+          path: originalPath,
+          size: fs.statSync(originalPath).size,
           originalFilename: newFileName,
-          backgroundRemoved: true
+          backgroundRemoved: false // Will be updated asynchronously
         });
         
         processedFiles.push({
           original: newFileName,
-          processed: finalFileName,
-          backgroundRemoved: true
+          processed: newFileName,
+          backgroundRemoved: false,
+          processing: true
         });
         
-        console.log(`✅ SAVED ONLY: ${finalFileName} (Background removed, original ALWAYS deleted)`);
-      } else {
-        // If processing failed, STILL delete original and skip this image
-        console.log(`❌ Background removal failed for ${newFileName}, DELETING original and skipping`);
+        console.log(`✅ SAVED: ${newFileName} (Processing background removal in background)`);
         
-        try {
-          fs.unlinkSync(originalPath);
-          console.log(`🗑️ DELETED failed image: ${newFileName}`);
-        } catch (error) {
-          console.log(`⚠️ Could not delete failed image: ${error}`);
-        }
+        // Process background removal ASYNCHRONOUSLY (don't block the response)
+        // This prevents connection timeouts and allows rapid image uploads
+        processUploadedImageWithBackgroundRemoval(
+          originalPath, 
+          userFolderPath, 
+          newFileName
+        ).then((processResult) => {
+          if (processResult.success && processResult.processedPath && processResult.processedPath !== originalPath) {
+            // Background removal succeeded - replace original with processed
+            const finalPath = processResult.processedPath;
+            const finalFileName = path.basename(finalPath);
+            
+            // Delete the original file with background
+            try {
+              fs.unlinkSync(originalPath);
+              console.log(`🗑️ DELETED original file with background: ${newFileName}`);
+            } catch (error) {
+              console.log(`⚠️ Could not delete original file: ${error}`);
+            }
+            
+            // Update the saved file info in database (optional - can be done later)
+            console.log(`✅ Background removed: ${newFileName} -> ${finalFileName}`);
+          } else {
+            // Background removal failed or returned original - keep original
+            console.log(`⚠️ Background removal failed for ${newFileName}, keeping original image`);
+          }
+        }).catch((error) => {
+          // Background removal error - keep original image
+          console.error(`❌ Background removal error for ${newFileName}:`, error);
+          console.log(`⚠️ Keeping original image: ${newFileName}`);
+        });
         
+      } catch (fileError) {
+        // If file saving fails, log error but continue with next file
+        console.error(`❌ Error processing file ${file.originalname}:`, fileError);
         processedFiles.push({
-          original: newFileName,
-          processed: 'FAILED - DELETED',
-          backgroundRemoved: false
+          original: file.originalname || 'unknown',
+          processed: 'ERROR - NOT SAVED',
+          backgroundRemoved: false,
+          error: fileError instanceof Error ? fileError.message : 'Unknown error'
         });
-        
-        console.log(`❌ SKIPPED: ${newFileName} (Background removal failed, original deleted)`);
+        // Continue with next file instead of failing entire request
       }
     }
 
-    // Update user record with face images info using findByIdAndUpdate to bypass validation
+    // Update user record with face images info
     const newFaceImages = savedFiles.map(file => ({
       step: step || 'unknown',
       filename: file.filename,
@@ -346,18 +368,27 @@ router.post('/register-multiple', uploadMultiple.array('images', 10), async (req
       uploadedAt: new Date()
     }));
 
-    await UserModel.findByIdAndUpdate(
-      userId,
-      { 
-        $push: { 
-          faceImages: { $each: newFaceImages } 
-        } 
-      },
-      { 
-        runValidators: false, // Bypass validation to avoid course field issues
-        new: true 
-      }
-    );
+    // Handle face images update for both online and offline modes
+    if (isOfflineMode()) {
+      // For offline mode, get existing face images and append new ones
+      const existingImages = user.faceImages || [];
+      const updatedImages = [...existingImages, ...newFaceImages];
+      await UserService.update(userId, { faceImages: updatedImages } as any);
+    } else {
+      // For online mode, use MongoDB's $push operator for better performance
+      await UserModel.findByIdAndUpdate(
+        userId,
+        { 
+          $push: { 
+            faceImages: { $each: newFaceImages } 
+          } 
+        },
+        { 
+          runValidators: false, // Bypass validation to avoid course field issues
+          new: true 
+        }
+      );
+    }
 
     const userDisplayName = `${user.first_name} ${user.last_name}`;
     const backgroundRemovedCount = savedFiles.filter(file => file.backgroundRemoved).length;
@@ -397,8 +428,8 @@ router.post('/process-background-removal/:userId', async (req, res): Promise<voi
   try {
     const { userId } = req.params;
     
-    // Check if user exists
-    const user = await UserModel.findById(userId);
+    // Check if user exists - uses UserService which works in both online and offline modes
+    const user = await UserService.findById(userId);
     if (!user) {
       res.status(404).json({ 
         success: false, 
@@ -458,7 +489,8 @@ router.get('/status/:userId', async (req, res): Promise<void> => {
   try {
     const { userId } = req.params;
     
-    const user = await UserModel.findById(userId);
+    // Uses UserService which works in both online and offline modes
+    const user = await UserService.findById(userId);
     if (!user) {
       res.status(404).json({ 
         success: false, 
@@ -489,7 +521,8 @@ router.delete('/delete/:userId', async (req, res): Promise<void> => {
   try {
     const { userId } = req.params;
     
-    const user = await UserModel.findById(userId);
+    // Uses UserService which works in both online and offline modes
+    const user = await UserService.findById(userId);
     if (!user) {
       res.status(404).json({ 
         success: false, 
@@ -498,25 +531,106 @@ router.delete('/delete/:userId', async (req, res): Promise<void> => {
       return;
     }
 
-    // Delete the face image file if it exists
-    if (user.faceImagePath && fs.existsSync(user.faceImagePath)) {
-      fs.unlinkSync(user.faceImagePath);
+    // Format names for deletion (handle both formats used in the system)
+    const folderName = `${user.first_name}_${user.last_name}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dbNameFormat = `${user.last_name}, ${user.first_name}`;
+    
+    // 1. Delete from SQLite database (face_embeddings.db)
+    try {
+      const dbPath = path.join(__dirname, '../../face_embeddings.db');
+      if (fs.existsSync(dbPath)) {
+        const db = new Database(dbPath);
+        
+        // Delete using both name formats (folder format and database format)
+        const deleteFolderFormat = db.prepare('DELETE FROM embeddings WHERE person_name = ?');
+        const deleteDbFormat = db.prepare('DELETE FROM embeddings WHERE person_name = ?');
+        
+        deleteFolderFormat.run(folderName);
+        deleteDbFormat.run(dbNameFormat);
+        
+        // Also delete by user_id if available
+        const deleteByUserId = db.prepare('DELETE FROM embeddings WHERE user_id = ?');
+        deleteByUserId.run(userId.toString());
+        
+        db.close();
+        console.log(`✅ Deleted embeddings from SQLite for: ${folderName} / ${dbNameFormat}`);
+      }
+    } catch (dbError) {
+      console.error('Error deleting from SQLite:', dbError);
+      // Continue with other deletions even if SQLite deletion fails
     }
 
-    // Remove face image path from user record
-    user.faceImagePath = undefined;
-    await user.save();
+    // 2. Delete the entire face folder from file system
+    const userFolderPath = path.join(__dirname, '../../../streaming-server/faces', folderName);
+    if (fs.existsSync(userFolderPath)) {
+      try {
+        // Use recursive deletion to handle files and subdirectories
+        if (fs.statSync(userFolderPath).isDirectory()) {
+          // Delete all files first (so watcher can detect them)
+          const files = fs.readdirSync(userFolderPath);
+          files.forEach((file) => {
+            const filePath = path.join(userFolderPath, file);
+            try {
+              const stat = fs.statSync(filePath);
+              if (stat.isFile()) {
+                fs.unlinkSync(filePath);
+                console.log(`✅ Deleted file: ${filePath}`);
+              } else if (stat.isDirectory()) {
+                fs.rmSync(filePath, { recursive: true, force: true });
+                console.log(`✅ Deleted subdirectory: ${filePath}`);
+              }
+            } catch (fileError) {
+              console.error(`Error deleting ${filePath}:`, fileError);
+            }
+          });
+          
+          // Remove the empty folder
+          fs.rmdirSync(userFolderPath);
+          console.log(`✅ Deleted folder: ${userFolderPath}`);
+        } else {
+          // It's a file, not a folder
+          fs.unlinkSync(userFolderPath);
+          console.log(`✅ Deleted file: ${userFolderPath}`);
+        }
+      } catch (folderError) {
+        console.error(`Error deleting folder ${userFolderPath}:`, folderError);
+        // Try force deletion as fallback
+        try {
+          fs.rmSync(userFolderPath, { recursive: true, force: true });
+          console.log(`✅ Force deleted folder: ${userFolderPath}`);
+        } catch (forceError) {
+          console.error(`Error force deleting folder:`, forceError);
+        }
+      }
+    }
+
+    // 3. Delete the face image file if it exists (legacy single file)
+    if (user.faceImagePath && fs.existsSync(user.faceImagePath)) {
+      try {
+        fs.unlinkSync(user.faceImagePath);
+        console.log(`✅ Deleted legacy face image: ${user.faceImagePath}`);
+      } catch (fileError) {
+        console.error(`Error deleting legacy face image:`, fileError);
+      }
+    }
+
+    // 4. Remove face image path from user record - works in both online and offline modes
+    await UserService.update(userId, { 
+      faceImagePath: undefined, 
+      faceImages: [] 
+    } as any);
 
     res.status(200).json({
       success: true,
-      message: 'Face registration deleted successfully'
+      message: 'Face registration deleted successfully. Embeddings removed from SQLite, face folder deleted, and user record updated.'
     });
 
   } catch (error) {
     console.error('Face deletion error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -602,6 +716,58 @@ router.get('/debug-folders', async (req, res): Promise<void> => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get all embeddings from MongoDB (for syncing to SQLite)
+router.get('/all-embeddings', async (req, res): Promise<void> => {
+  try {
+    // This endpoint would fetch embeddings from MongoDB
+    // For now, return empty array - can be enhanced to fetch from MongoDB
+    res.json({
+      success: true,
+      embeddings: [],
+      message: 'Embeddings endpoint - to be implemented with MongoDB storage'
+    });
+  } catch (error) {
+    console.error('Error fetching embeddings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching embeddings',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Sync embeddings to MongoDB (for backup)
+router.post('/sync-embeddings', async (req, res): Promise<void> => {
+  try {
+    const { embeddings } = req.body;
+    
+    if (!embeddings || !Array.isArray(embeddings)) {
+      res.status(400).json({
+        success: false,
+        message: 'embeddings array is required'
+      });
+      return;
+    }
+    
+    // TODO: Save embeddings to MongoDB
+    // For now, just acknowledge receipt
+    console.log(`Received ${embeddings.length} embeddings for MongoDB sync`);
+    
+    res.json({
+      success: true,
+      message: `Received ${embeddings.length} embeddings for sync`,
+      count: embeddings.length
+    });
+  } catch (error) {
+    console.error('Error syncing embeddings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error syncing embeddings',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }

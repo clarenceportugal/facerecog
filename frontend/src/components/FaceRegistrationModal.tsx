@@ -41,7 +41,7 @@ interface FaceRegistrationModalProps {
   userId?: string; // Fallback user ID prop
 }
 
-const PHOTOS_PER_STEP = 10;
+const PHOTOS_PER_STEP = 4;
 const JPEG_QUALITY = 0.95;
 
 const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({ 
@@ -295,7 +295,8 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
     setCameraStatus('loading');
   };
 
-  // Manual capture 20 photos for current step
+
+  // Manual capture 4 photos for current step
   const startManualCapture = async () => {
     if (!open || cameraStatus !== 'ready') {
       console.log('❌ Cannot start capture: modal not open or camera not ready');
@@ -313,10 +314,10 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
       return;
     }
 
-    console.log(`📸 Starting manual capture for step ${activeStep + 1} - will capture 10 photos`);
+    console.log(`📸 Starting manual capture for step ${activeStep + 1} - will capture 4 photos`);
     setIsCapturing(true);
 
-    // Capture 10 photos with 1 second interval
+    // Capture 4 photos with 1 second interval
     for (let i = 0; i < PHOTOS_PER_STEP; i++) {
       if (!open || cameraStatus !== 'ready') {
         console.log('❌ Capture stopped: modal closed or camera not ready');
@@ -342,7 +343,7 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
     setIsCapturing(false);
     
     // Show success message
-    setSuccess(`Step ${activeStep + 1} completed! All 10 photos captured and saved.`);
+    setSuccess(`Step ${activeStep + 1} completed! All 4 photos captured and saved.`);
     setTimeout(() => setSuccess(''), 3000);
   };
 
@@ -396,7 +397,7 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
         console.log(`📸 Generated image data: ${imageData.length} characters`);
         console.log(`📸 Image data preview: ${imageData.substring(0, 50)}...`);
         
-        // Store photo - ensure we don't exceed 20 photos per step
+        // Store photo - ensure we don't exceed 4 photos per step
         setAllCapturedPhotos(prev => {
           const currentStepPhotos = prev[activeStep] || [];
           if (currentStepPhotos.length >= PHOTOS_PER_STEP) {
@@ -925,7 +926,7 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
             Total photos: {Object.values(allCapturedPhotos).flat().length} photos
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontSize: '0.75rem' }}>
-            Step photos: Step 1: {allCapturedPhotos[0]?.length || 0}/10, Step 2: {allCapturedPhotos[1]?.length || 0}/10, Step 3: {allCapturedPhotos[2]?.length || 0}/10, Step 4: {allCapturedPhotos[3]?.length || 0}/10
+            Step photos: Step 1: {allCapturedPhotos[0]?.length || 0}/4, Step 2: {allCapturedPhotos[1]?.length || 0}/4, Step 3: {allCapturedPhotos[2]?.length || 0}/4, Step 4: {allCapturedPhotos[3]?.length || 0}/4
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             💾 Immediate save per photo | 📸 Manual capture (1s per photo) | 🔄 Manual step advance
@@ -1007,7 +1008,7 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
                 disabled={isCapturing || cameraStatus !== 'ready'}
                 startIcon={<CameraIcon />}
               >
-                {isCapturing ? `Capturing... (${(allCapturedPhotos[activeStep]?.length || 0)}/10)` : `Capture Step ${activeStep + 1}`}
+                {isCapturing ? `Capturing... (${(allCapturedPhotos[activeStep]?.length || 0)}/4)` : `Capture Step ${activeStep + 1}`}
               </Button>
             )}
             

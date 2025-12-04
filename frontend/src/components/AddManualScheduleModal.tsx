@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import axios from "axios";
 import Swal from "sweetalert2";
+import { API_BASE_URL } from "../utils/api";
 
 interface AddManualScheduleProps {
   open: boolean;
@@ -57,8 +58,8 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
     courseCode: "",
     instructor: faculty?._id || "",
     room: "",
-    startTime: "",
-    endTime: "",
+    startTime: "07:00", // Default start time: 7:00 AM
+    endTime: "08:00",   // Default end time: 8:00 AM
     days: {
       mon: false,
       tue: false,
@@ -112,7 +113,7 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
     try {
       setLoading(true);
       const res = await axios.post(
-        "http://localhost:5000/api/auth/add-schedules",
+        `${API_BASE_URL}/api/auth/add-schedules`,
         formData
       );
       console.log("Schedule created:", res.data);
@@ -143,11 +144,17 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
     const fetchSubjects = async () => {
       try {
         const res = await axios.get<Subject[]>(
-          "https://eduvision-dura.onrender.com/api/auth/subjects"
+          `${API_BASE_URL}/api/auth/subjects`
         );
         setSubjects(res.data);
       } catch (err) {
         console.error("Failed to fetch subjects", err);
+        Swal.fire({
+          icon: "warning",
+          title: "Notice",
+          text: "Could not load subjects. You may need to add them manually.",
+          timer: 3000,
+        });
       }
     };
 
@@ -158,11 +165,17 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
     const fetchRooms = async () => {
       try {
         const res = await axios.get<Room[]>(
-          "https://eduvision-dura.onrender.com/api/auth/rooms"
+          `${API_BASE_URL}/api/auth/rooms`
         );
         setRooms(res.data);
       } catch (error) {
         console.error("Failed to fetch rooms", error);
+        Swal.fire({
+          icon: "warning",
+          title: "Notice",
+          text: "Could not load rooms. You may need to add them manually.",
+          timer: 3000,
+        });
       }
     };
 
@@ -173,11 +186,17 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
     const fetchSections = async () => {
       try {
         const res = await axios.get<Section[]>(
-          "https://eduvision-dura.onrender.com/api/auth/sections"
+          `${API_BASE_URL}/api/auth/sections`
         );
         setSections(res.data);
       } catch (error) {
         console.error("Failed to fetch sections", error);
+        Swal.fire({
+          icon: "warning",
+          title: "Notice",
+          text: "Could not load sections. You may need to add them manually.",
+          timer: 3000,
+        });
       }
     };
 
@@ -187,7 +206,7 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
   useEffect(() => {
   const fetchSemesters = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/auth/all-semesters");
+      const res = await axios.get(`${API_BASE_URL}/api/auth/all-semesters`);
 
       // ✅ Extract semester data
       const data = res.data.data || [];
@@ -360,6 +379,7 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
               name="startTime"
               type="time"
               fullWidth
+              value={formData.startTime}
               onChange={handleChange}
               InputLabelProps={{ shrink: true }}
             />
@@ -370,6 +390,7 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
               name="endTime"
               type="time"
               fullWidth
+              value={formData.endTime}
               onChange={handleChange}
               InputLabelProps={{ shrink: true }}
             />

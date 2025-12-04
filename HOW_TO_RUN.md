@@ -68,7 +68,20 @@ Before running, make sure you have:
 
 ### 3. Start the EduVision System
 
-**Option 1: Use the Simple Launcher (Recommended)**
+**⭐ Option 1: One-Click Start (NEW - Recommended!)**
+
+Simply double-click: **`START_EduVision.bat`**
+
+This will:
+- Start all services in **minimized windows**
+- Automatically open the browser
+- All windows appear in taskbar (easy to check if needed)
+
+**To stop everything:** Double-click `STOP_EduVision.bat`
+
+**For completely hidden windows:** Use `START_EduVision_Hidden.bat`
+
+**Option 2: Use the Simple Launcher**
 
 ```powershell
 cd C:\Users\ALLEN\Downloads\eduvision-main\eduvision
