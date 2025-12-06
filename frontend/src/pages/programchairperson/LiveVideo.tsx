@@ -287,7 +287,7 @@ const LiveVideo: React.FC = () => {
                 // Minimal smoothing only when very few faces for visual polish
                 let finalBox = face.box;
                 if (useMinimalSmoothing) {
-                  const existingSmoothed = smoothedBoxesRef.current.get(faceKey);
+                const existingSmoothed = smoothedBoxesRef.current.get(faceKey);
                   if (existingSmoothed) {
                     // Very fast interpolation (0.95 = almost instant) for minimal delay
                     finalBox = smoothBox(existingSmoothed.box, face.box, 0.95);
@@ -307,11 +307,11 @@ const LiveVideo: React.FC = () => {
                   trackedFace.lastSeen = now;
                   trackedFace.framesSinceUpdate = 0;
                 } else {
-                  trackedFacesRef.current.set(faceKey, {
+                trackedFacesRef.current.set(faceKey, {
                     detection: { ...face, box: finalBox },
-                    lastSeen: now,
-                    framesSinceUpdate: 0
-                  });
+                  lastSeen: now,
+                  framesSinceUpdate: 0
+                });
                 }
                 
                 // ⚡ OPTIMIZED: Reuse face object if possible (faster than spreading)
@@ -323,7 +323,7 @@ const LiveVideo: React.FC = () => {
               frameCountRef.current++;
 
               // ⚡ ULTRA-OPTIMIZED THROTTLING: Minimal state updates for maximum performance
-              const throttleRate = faceCount > 4 ? 4 : (faceCount > 2 ? 3 : 2);
+              const throttleRate = faceCount > 4 ? 3 : (faceCount > 2 ? 2 : 1);  // More frequent updates for accuracy
               
               // ⚡ ULTRA-OPTIMIZED: Quick name comparison (minimal operations)
               let namesChanged = false;
@@ -341,9 +341,11 @@ const LiveVideo: React.FC = () => {
                 }
               }
               
-              // Update state only when necessary or throttled
+              // ⚡ OPTIMIZED: Always update ref immediately, state update throttled for performance
+              // Update state only when necessary or throttled (but more frequently for accuracy)
               if (frameCountRef.current % throttleRate === 0 || namesChanged) {
-                requestAnimationFrame(() => {
+                // Use microtask for smoother updates
+                Promise.resolve().then(() => {
                   setFaces(activeFaces);
                 });
               }
@@ -535,8 +537,8 @@ const LiveVideo: React.FC = () => {
       }
 
       // Update canvas size only if changed
-      const newWidth = img.naturalWidth || 640;
-      const newHeight = img.naturalHeight || 480;
+      const newWidth = img.naturalWidth || 1920;
+      const newHeight = img.naturalHeight || 1080;
       if (canvas.width !== newWidth || canvas.height !== newHeight) {
         canvas.width = newWidth;
         canvas.height = newHeight;
@@ -551,11 +553,8 @@ const LiveVideo: React.FC = () => {
       ctx.textBaseline = "top";
         ctx.lineWidth = 3;
         
-        // ⚡ ADAPTIVE QUALITY: Skip text labels when many faces for performance
-        const showLabels = faceCount <= 3; // Only show labels for 3 or fewer faces (reduced from 4)
-        if (showLabels) {
-          ctx.font = "bold 16px Arial";
-        }
+        // ⚡ ADAPTIVE QUALITY: Always show labels for all faces (user needs to see names)
+        ctx.font = "bold 16px Arial"; // Always set font for labels
         
         const textHeight = 22;
         const padding = 6;
@@ -595,39 +594,56 @@ const LiveVideo: React.FC = () => {
             isGreen
           };
           
-          if (showLabels) {
-        const name = f.name || "Unknown";
-            boxInfo.name = name;
-            boxInfo.textWidth = ctx.measureText(name).width;
-          }
+          // Always include name and text width for labels (always show names)
+          const name = f.name || "Unknown";
+          boxInfo.name = name;
+          boxInfo.textWidth = ctx.measureText(name).width;
           
           boxData.push(boxInfo);
         }
         
-        // ⚡ ULTRA-OPTIMIZED: Batch drawing with color grouping (minimizes state changes)
-        // Group boxes by color to reduce canvas state changes
-        const greenBoxes: typeof boxData = [];
-        const yellowBoxes: typeof boxData = [];
-        
-        for (const box of boxData) {
-          if (box.isGreen) {
-            greenBoxes.push(box);
-          } else {
-            yellowBoxes.push(box);
-          }
-        }
-        
-        // Draw all green boxes first (single state change)
-        if (greenBoxes.length > 0) {
-          ctx.strokeStyle = GREEN_BOX;
-          for (const box of greenBoxes) {
+        // ⚡ ULTRA-OPTIMIZED: Direct drawing without grouping (faster for small number of faces)
+        // For better performance, draw directly without grouping when face count is low
+        if (faceCount <= 4) {
+          // Direct drawing (faster for few faces)
+          for (const box of boxData) {
+            ctx.strokeStyle = box.isGreen ? GREEN_BOX : YELLOW_BOX;
             ctx.strokeRect(box.x, box.y, box.w, box.h);
+            
+            // Always show labels for all faces
+            if (box.name) {
+              const labelY = box.y - textHeight - padding;
+              const labelW = Math.round(box.textWidth! + padding * 2);
+              
+              ctx.fillStyle = box.isGreen ? GREEN_BG : YELLOW_BG;
+              ctx.fillRect(box.x, labelY, labelW, textHeight + padding);
+              
+              ctx.fillStyle = BLACK_TEXT;
+              ctx.fillText(box.name, box.x + padding, labelY + 2);
+            }
+          }
+        } else {
+          // Grouped drawing for many faces (minimizes state changes)
+          const greenBoxes: typeof boxData = [];
+          const yellowBoxes: typeof boxData = [];
+          
+          for (const box of boxData) {
+            if (box.isGreen) {
+              greenBoxes.push(box);
+            } else {
+              yellowBoxes.push(box);
+            }
           }
           
-          // Draw green labels if needed
-          if (showLabels) {
+          // Draw all green boxes first (single state change)
+          if (greenBoxes.length > 0) {
+            ctx.strokeStyle = GREEN_BOX;
+            for (const box of greenBoxes) {
+              ctx.strokeRect(box.x, box.y, box.w, box.h);
+            }
+            
+            // Always draw green labels
             ctx.fillStyle = GREEN_BG;
-            ctx.strokeStyle = GREEN_BOX; // Reset for consistency
             for (const box of greenBoxes) {
               if (box.name) {
                 const labelY = box.y - textHeight - padding;
@@ -643,19 +659,16 @@ const LiveVideo: React.FC = () => {
               }
             }
           }
-        }
-        
-        // Draw all yellow boxes (single state change)
-        if (yellowBoxes.length > 0) {
-          ctx.strokeStyle = YELLOW_BOX;
-          for (const box of yellowBoxes) {
-            ctx.strokeRect(box.x, box.y, box.w, box.h);
-          }
           
-          // Draw yellow labels if needed
-          if (showLabels) {
+          // Draw all yellow boxes (single state change)
+          if (yellowBoxes.length > 0) {
+            ctx.strokeStyle = YELLOW_BOX;
+            for (const box of yellowBoxes) {
+              ctx.strokeRect(box.x, box.y, box.w, box.h);
+            }
+            
+            // Always draw yellow labels
             ctx.fillStyle = YELLOW_BG;
-            ctx.strokeStyle = YELLOW_BOX; // Reset for consistency
             for (const box of yellowBoxes) {
               if (box.name) {
                 const labelY = box.y - textHeight - padding;
@@ -680,7 +693,7 @@ const LiveVideo: React.FC = () => {
             if (!currentNames.has(key)) {
               displayedBoxes.delete(key);
             }
-      });
+          });
         }
       } else {
         displayedBoxes.clear();

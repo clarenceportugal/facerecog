@@ -74,7 +74,7 @@ USE_LOCAL_CACHE_FOR_DETECTION = False  # Disabled - always use MongoDB
 # Detection threshold: Increased by 0.1 for better accuracy
 DETECTION_THRESHOLD = 0.35  # Increased by 0.1 (was 0.25) - better accuracy while still detecting distant faces
 # Recognition threshold: Optimized for fast real-time recognition even for distant faces
-CONF_THRESHOLD = 0.38  # Increased by 0.05 (was 0.33) - higher threshold for better accuracy
+CONF_THRESHOLD = 0.45  # Increased by 0.07 (was 0.38) - much higher threshold for accurate recognition (prevents false positives)
 ABSENCE_TIMEOUT_SECONDS = 300  # 5 minutes = 300 seconds
 LATE_THRESHOLD_MINUTES = 15  # 15 minutes late threshold
 SCHEDULE_RECHECK_INTERVAL_SECONDS = 300  # Re-check schedules every 5 minutes for existing sessions
@@ -266,7 +266,7 @@ def batch_get_schedules(instructor_names, camera_id="camera1", room_name=None):
     
     # ⚡ MONGODB-ONLY: Always fetch from MongoDB API (no local database lookup)
     # ⚡ Batch lookup from in-memory cache (fast - refreshed from MongoDB)
-        for name in instructor_names:
+    for name in instructor_names:
         schedule = get_current_schedule_from_cache(name)
         if schedule:
             # ⚡ TIME-ONLY VALIDATION: isValidSchedule based ONLY on schedule time (room check removed)
@@ -368,8 +368,8 @@ def get_current_schedule(instructor_name, camera_id="camera1", room_name=None):
         # Green = within scheduled time, Yellow = outside scheduled time
         schedule['isValidSchedule'] = True  # ✅ Always True if time matches (room check removed)
         schedule['roomMatch'] = None  # Room validation disabled
-                # Only log occasionally to reduce spam
-                if hash(instructor_name) % 50 == 0:
+        # Only log occasionally to reduce spam
+        if hash(instructor_name) % 50 == 0:
             print(f"[DATA SOURCE] [CACHE] [OK] {instructor_name} has class NOW (from IN-MEMORY CACHE - MongoDB): {schedule.get('courseCode')} - Time-based validation only", file=sys.stderr, flush=True)
         
         return schedule
@@ -853,7 +853,7 @@ def read_frame_from_stdin():
         # ⚡ ULTRA-AGGRESSIVE FRAME SKIPPING: Read and discard ALL queued frames, keep only the latest
         latest_frame = None
         frames_skipped = 0
-        max_skip = 100  # Increased to skip more frames for zero delay
+        max_skip = 200  # Increased to skip more frames for zero delay (was 100)
         
         # Keep reading frames until stdin is empty (non-blocking)
         for _ in range(max_skip):
@@ -1141,7 +1141,8 @@ try:
             embeddings = [None] * num_faces
             if aligned_faces:
                 # ⚡ ULTRA-OPTIMIZED: True batch processing - stack all faces and process at once
-                batch_imgs = np.stack(aligned_faces, axis=0)
+                # ⚡ OPTIMIZED: Ensure contiguous array for faster GPU operations
+                batch_imgs = np.ascontiguousarray(np.stack(aligned_faces, axis=0), dtype=np.uint8)
                 # Try batch processing if model supports it, otherwise fallback to loop
                 try:
                     # Attempt batch inference (faster for multiple faces)
@@ -1267,7 +1268,7 @@ except Exception as e:
 if not OFFLINE_MODE:
     # ⚡ MONGODB-ONLY: Always load in-memory cache from MongoDB
     print("[INFO] [MONGODB-ONLY] Loading schedule cache from MongoDB...", file=sys.stderr, flush=True)
-        refresh_schedule_cache()  # Initial load
+    refresh_schedule_cache()  # Initial load
 
     # Background thread to periodically refresh schedule cache
     def cache_refresh_worker():
@@ -1393,8 +1394,8 @@ try:
                     detection_time = time.time() - detection_start
                     total_detection_time += detection_time
                     
-                    # ⚡ PERFORMANCE MONITORING: Log GPU performance periodically
-                    if len(faces) > 0 and frame_count % 200 == 0:
+                    # ⚡ PERFORMANCE MONITORING: Log GPU performance periodically (reduced frequency for performance)
+                    if len(faces) > 0 and frame_count % 500 == 0:  # Reduced from 200 to 500
                         fps = 1.0 / detection_time if detection_time > 0 else 0
                         print(f"[PROFILE] ⚡ Frame {frame_count}: Detection={detection_time*1000:.1f}ms ({fps:.1f} FPS), Faces={len(faces)} - GPU ACCELERATED", file=sys.stderr, flush=True)
                         if detection_time > 0.05:  # Warn if detection takes more than 50ms
@@ -1436,15 +1437,20 @@ try:
                     # ⚡ ULTRA-OPTIMIZED: Direct assignment (embeddings always present after detection)
                     for i in range(num_faces):
                         face_embeddings[i] = faces[i].embedding  # Direct assignment (faster, no None check needed)
+                    # ⚡ ULTRA-OPTIMIZED: Ensure contiguous array for maximum GPU performance
+                    face_embeddings = np.ascontiguousarray(face_embeddings, dtype=np.float32)
                     # ⚡ ULTRA-OPTIMIZED: Vectorized normalization (single GPU operation)
                     face_norms = np.linalg.norm(face_embeddings, axis=1, keepdims=True)
                     np.maximum(face_norms, 1e-10, out=face_norms)  # In-place operation (faster)
                     normalized_embeddings = np.divide(face_embeddings, face_norms)  # Explicit divide (faster)
+                    # ⚡ OPTIMIZED: Ensure normalized embeddings are contiguous for GPU
+                    normalized_embeddings = np.ascontiguousarray(normalized_embeddings, dtype=np.float32)
                     
                     # Step 2: Single batch matrix multiplication for ALL faces (GPU-accelerated, INSTANT!)
-                    # ⚡ ULTRA-OPTIMIZED: Cache type check (avoid repeated checks)
-                    # Note: known_embeddings is already float32 from load_embeddings, so skip check
-                    # ⚡ OPTIMIZED: Direct matrix multiplication (GPU-accelerated, no type conversion needed)
+                    # ⚡ ULTRA-OPTIMIZED: Ensure known_embeddings is contiguous for maximum GPU performance
+                    if not known_embeddings.flags['C_CONTIGUOUS']:
+                        known_embeddings = np.ascontiguousarray(known_embeddings, dtype=np.float32)
+                    # ⚡ OPTIMIZED: Direct matrix multiplication with contiguous arrays (GPU-accelerated, fastest)
                     all_similarities = np.dot(known_embeddings, normalized_embeddings.T)
                     
                     # Step 3: Get best matches for ALL faces at once (vectorized, GPU-optimized)
@@ -1492,85 +1498,88 @@ try:
                 # ⚡ OPTIMIZED: Process each face with pre-computed results
                 # Early exit if no known embeddings
                 if len(known_embeddings) > 0:
-                for face_idx, f in enumerate(faces):
+                    for face_idx, f in enumerate(faces):
                         # ⚡ ULTRA-OPTIMIZED: Direct bbox access with single unpack (faster)
                         bbox = f.bbox
                         # ⚡ OPTIMIZED: Direct indexing and calculation (no intermediate variables)
                         x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
                         w, h = x2 - x1, y2 - y1  # Single line assignment (faster)
-                    
-                    # Use pre-computed batch results instead of per-face computation
-                    best_idx = best_indices[face_idx]
-                    best_score = best_scores[face_idx]
-                    
-                    if best_score > CONF_THRESHOLD:
-                        name = known_names[best_idx]
-                        currently_detected_names.add(name)
-                            # ⚡ OPTIMIZED: Reduced debug logging for performance
-                            if frame_count % 2000 == 0:  # Log every 2000 frames (reduced frequency)
-                                print(f"[DEBUG] ✅ Recognized: {name} (score: {best_score:.3f}, threshold: {CONF_THRESHOLD})", file=sys.stderr, flush=True)
                         
-                        # Handle session tracking
-                        if name not in person_sessions:
-                            # ⚡ Use pre-fetched batch schedule instead of individual lookup
-                            schedule = batch_schedules.get(name)
-                            
-                            # Create session for ALL detected faculty (scheduled or not)
-                            person_sessions[name] = PersonSession(name)
-                            person_sessions[name].schedule = schedule
-                            
-                            if schedule:
-                                # They have a class scheduled NOW
-                                person_sessions[name].is_late = schedule.get('is_late', False)
+                        # Use pre-computed batch results instead of per-face computation
+                        best_idx = best_indices[face_idx]
+                        best_score = best_scores[face_idx]
+                        
+                        # ⚡ STRICT VALIDATION: Only recognize if score is above threshold AND name is valid
+                        if best_score > CONF_THRESHOLD:
+                            name = known_names[best_idx]
+                            # ⚡ ADDITIONAL VALIDATION: Ensure name is not empty and score is high enough
+                            if name and name.strip() and best_score >= CONF_THRESHOLD:
+                                currently_detected_names.add(name)
+                                # ⚡ OPTIMIZED: Reduced debug logging for performance
+                                if frame_count % 2000 == 0:  # Log every 2000 frames (reduced frequency)
+                                    print(f"[DEBUG] ✅ Recognized: {name} (score: {best_score:.3f}, threshold: {CONF_THRESHOLD})", file=sys.stderr, flush=True)
                                 
-                                # Log time in with late status
-                                success, log_type = log_time_in(
-                                    name, 
-                                    schedule['_id'], 
-                                    "camera1",
-                                    schedule.get('is_late', False)
-                                )
-                                
-                                if success:
-                                    person_sessions[name].time_in_logged = True
-                                    person_sessions[name].log_type = log_type
+                                # Handle session tracking (INSIDE the validation block)
+                                if name not in person_sessions:
+                                    # ⚡ Use pre-fetched batch schedule instead of individual lookup
+                                    schedule = batch_schedules.get(name)
                                     
-                                    status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
-                                    status_text = "ON TIME" if log_type == "time in" else "LATE"
+                                    # Create session for ALL detected faculty (scheduled or not)
+                                    person_sessions[name] = PersonSession(name)
+                                    person_sessions[name].schedule = schedule
                                     
-                                    events.append({
-                                        "type": log_type,
-                                        "name": name,
-                                        "timestamp": person_sessions[name].first_seen.isoformat(),
-                                        "schedule": schedule,
-                                        "isLate": schedule.get('is_late', False),
-                                        "status": status_text
-                                    })
-                                    
-                                    print(f"[INFO] {status_emoji} {log_type.upper()} logged for {name} - {schedule['courseCode']} ({status_text})", file=sys.stderr, flush=True)
+                                    if schedule:
+                                        # They have a class scheduled NOW
+                                        person_sessions[name].is_late = schedule.get('is_late', False)
+                                        
+                                        # Log time in with late status
+                                        success, log_type = log_time_in(
+                                            name, 
+                                            schedule['_id'], 
+                                            "camera1",
+                                            schedule.get('is_late', False)
+                                        )
+                                        
+                                        if success:
+                                            person_sessions[name].time_in_logged = True
+                                            person_sessions[name].log_type = log_type
+                                            
+                                            status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
+                                            status_text = "ON TIME" if log_type == "time in" else "LATE"
+                                            
+                                            events.append({
+                                                "type": log_type,
+                                                "name": name,
+                                                "timestamp": person_sessions[name].first_seen.isoformat(),
+                                                "schedule": schedule,
+                                                "isLate": schedule.get('is_late', False),
+                                                "status": status_text
+                                            })
+                                            
+                                            print(f"[INFO] {status_emoji} {log_type.upper()} logged for {name} - {schedule['courseCode']} ({status_text})", file=sys.stderr, flush=True)
+                                        else:
+                                            print(f"[WARN] Failed to log {log_type.upper()} for {name}", file=sys.stderr, flush=True)
+                                        
+                                        events.append({
+                                            "type": "first_detected",
+                                            "name": name,
+                                            "timestamp": person_sessions[name].first_seen.isoformat(),
+                                            "has_schedule": True
+                                        })
+                                    else:
+                                        # ⚡ OPTIMIZED: Reduced logging for performance
+                                        # Only log on first detection or every 2000 frames (reduced frequency)
+                                        if frame_count % 2000 == 0:
+                                            print(f"[INFO] 📋 {name} detected without scheduled class - Tracking only", file=sys.stderr, flush=True)
+                                        events.append({
+                                            "type": "detected_no_schedule",
+                                            "name": name,
+                                            "timestamp": datetime.now().isoformat(),
+                                            "message": f"{name} detected (no scheduled class)"
+                                        })
                                 else:
-                                    print(f"[WARN] Failed to log {log_type.upper()} for {name}", file=sys.stderr, flush=True)
-                                
-                                events.append({
-                                    "type": "first_detected",
-                                    "name": name,
-                                    "timestamp": person_sessions[name].first_seen.isoformat(),
-                                    "has_schedule": True
-                                })
-                            else:
-                                # ⚡ OPTIMIZED: Reduced logging for performance
-                                # Only log on first detection or every 2000 frames (reduced frequency)
-                                if frame_count % 2000 == 0:
-                                    print(f"[INFO] 📋 {name} detected without scheduled class - Tracking only", file=sys.stderr, flush=True)
-                                events.append({
-                                    "type": "detected_no_schedule",
-                                    "name": name,
-                                    "timestamp": datetime.now().isoformat(),
-                                    "message": f"{name} detected (no scheduled class)"
-                                })
-                        else:
-                            # Existing session - Re-check schedule periodically or when person returns
-                            session = person_sessions[name]
+                                    # Existing session - Re-check schedule periodically or when person returns
+                                    session = person_sessions[name]
                             
                             # Check if we should re-check the schedule
                             should_recheck = False
@@ -1587,7 +1596,7 @@ try:
                                     })
                                     # ⚡ OPTIMIZED: Reduced logging for performance
                                     if frame_count % 500 == 0:
-                                    print(f"[INFO] {name} RETURNED after {absence_duration/60:.1f} min - Re-checking schedule", file=sys.stderr, flush=True)
+                                        print(f"[INFO] {name} RETURNED after {absence_duration/60:.1f} min - Re-checking schedule", file=sys.stderr, flush=True)
                             else:
                                 session.update_presence()
                                 # Check if it's been more than SCHEDULE_RECHECK_INTERVAL_SECONDS since last check
@@ -1596,7 +1605,7 @@ try:
                                     should_recheck = True
                                     # ⚡ OPTIMIZED: Reduced logging for performance
                                     if frame_count % 1000 == 0:
-                                    print(f"[INFO] Re-checking schedule for {name} (last checked {time_since_last_check:.0f}s ago)", file=sys.stderr, flush=True)
+                                        print(f"[INFO] Re-checking schedule for {name} (last checked {time_since_last_check:.0f}s ago)", file=sys.stderr, flush=True)
                             
                             # Re-check schedule if needed
                             if should_recheck:
@@ -1675,32 +1684,36 @@ try:
                                         new_schedule['isValidSchedule'] = True  # Default to valid if time matches
                                     session.schedule = new_schedule
                                     session.is_late = new_schedule.get('is_late', False)
-                        
-                        # ⚡ OPTIMIZED: Add detected faces to detections (minimal operations)
-                        if name in person_sessions:
-                            session = person_sessions[name]
-                            schedule = session.schedule
-                            
-                            # ⚡ ULTRA-OPTIMIZED: Quick schedule validation (minimal checks)
-                            has_schedule = schedule is not None
-                            # Direct access to isValidSchedule (faster than dict.get)
-                            is_valid_schedule = schedule.get("isValidSchedule", True) if schedule else False
-                            
-                            # ⚡ OPTIMIZED: Use to_dict but cache it (faster than building manually)
-                            session_dict = person_sessions[name].to_dict()
-                            detections.append({
-                                "box": [x1, y1, w, h],
-                                "name": name,
-                                "score": float(best_score),
-                                "session": session_dict,
-                                "has_schedule": has_schedule,
-                                "is_valid_schedule": bool(is_valid_schedule)
-                            })
-                    else:
-                        # Face detected but confidence too low - skip (don't show as Unknown)
-                        if frame_count % 1000 == 0:  # Reduced from 300 to reduce spam
-                            print(f"[DEBUG] Face detected but not recognized (score {best_score:.3f} < threshold {CONF_THRESHOLD})", file=sys.stderr, flush=True)
-                        # Don't add to detections - only show recognized faces
+                                
+                                # ⚡ OPTIMIZED: Add detected faces to detections (minimal operations)
+                                if name in person_sessions:
+                                    session = person_sessions[name]
+                                    schedule = session.schedule
+                                    
+                                    # ⚡ ULTRA-OPTIMIZED: Quick schedule validation (minimal checks)
+                                    has_schedule = schedule is not None
+                                    # Direct access to isValidSchedule (faster than dict.get)
+                                    is_valid_schedule = schedule.get("isValidSchedule", True) if schedule else False
+                                    
+                                    # ⚡ OPTIMIZED: Use to_dict but cache it (faster than building manually)
+                                    session_dict = person_sessions[name].to_dict()
+                                    detections.append({
+                                        "box": [x1, y1, w, h],
+                                        "name": name,
+                                        "score": float(best_score),
+                                        "session": session_dict,
+                                        "has_schedule": has_schedule,
+                                        "is_valid_schedule": bool(is_valid_schedule)
+                                    })
+                            else:
+                                # Face detected but not in sessions (shouldn't happen, but safety check)
+                                if frame_count % 1000 == 0:
+                                    print(f"[WARN] Face recognized ({name}) but not in sessions - skipping", file=sys.stderr, flush=True)
+                        else:
+                            # Face detected but confidence too low - skip (don't show as Unknown)
+                            if frame_count % 1000 == 0:  # Reduced from 300 to reduce spam
+                                print(f"[DEBUG] Face detected but not recognized (score {best_score:.3f} < threshold {CONF_THRESHOLD})", file=sys.stderr, flush=True)
+                            # Don't add to detections - only show recognized faces
             
                 # Recognition time already calculated in the else block above
                 # No need to recalculate here

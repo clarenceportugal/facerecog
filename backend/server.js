@@ -654,11 +654,11 @@ let frameToClientTimestamps = new Map(); // frameNumber -> sent to client timest
 let totalFrameCaptureToClient = 0;
 let totalFramesToClient = 0;
       // ⚡ Frame skip rate: Lower = more frames processed (faster detection)
-      // GPU (GTX 3050 Ti): Use 1 for TRUE REAL-TIME detection (every frame processed)
+      // GPU (GTX 3050 Ti): Use 2-3 for smooth detection without buffer overflow
       // CPU: Use 5 or higher to reduce load
       // Set via FRAME_SKIP_RATE environment variable
-      // Default: 1 for GPU mode = ZERO DELAY even with multiple faces
-      const FRAME_SKIP_RATE = parseInt(process.env.FRAME_SKIP_RATE) || 1;
+      // Default: 2 for GPU mode = smooth detection without buffer overflow
+      const FRAME_SKIP_RATE = parseInt(process.env.FRAME_SKIP_RATE) || 2;
 
 function sendFrameToPython(jpgBuffer, cameraId) {
   if (!pythonReady) {
@@ -695,11 +695,14 @@ function sendFrameToPython(jpgBuffer, cameraId) {
     const success = python.stdin.write(data);
     
     if (!success) {
-      // Buffer is full - wait for drain event
+      // Buffer is full - skip more frames to catch up
       framesDroppedBecauseBufferFull++;
+      // ⚡ AUTO-ADJUST: Increase skip rate temporarily when buffer is full
       if (framesDroppedBecauseBufferFull % 50 === 0) {
         console.warn(`[WARNING] Python stdin buffer full - dropped ${framesDroppedBecauseBufferFull} frames. Python is processing too slowly.`);
         console.warn(`[WARNING] Consider reducing frame rate or increasing FRAME_SKIP_RATE (currently ${FRAME_SKIP_RATE})`);
+        // Temporarily skip more frames to catch up
+        frameSkipCounter = 0; // Reset counter to skip next few frames
       }
       // Don't wait - just drop this frame and continue
       return;
@@ -1029,7 +1032,7 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
     '-i', rtspUrl,
     '-f', 'mjpeg',
     '-q:v', '5',                  // Lower quality for zero delay (5 = faster encoding)
-    '-vf', 'fps=30,scale=1920:1080',  // 30 FPS + Full HD
+         '-vf', 'fps=20,scale=1920:1080',  // 20 FPS + Full HD (reduced from 30 for faster processing)
     '-thread_queue_size', '1',    // Minimal queue for zero delay (was 512)
     '-vsync', '0',                // Passthrough timestamps (no sync delay)
     '-preset', 'ultrafast',       // Fastest encoding
@@ -1094,13 +1097,13 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
           let metadataStr;
           if (latestDetections.length > 0 || latestEvents.length > 0) {
             metadataStr = JSON.stringify({
-              cameraId,
-              frameNumber: frameCount,
-              faces: latestDetections,
-              events: latestEvents,
-              frame_width: latestFrameWidth,
-              frame_height: latestFrameHeight
-            });
+            cameraId,
+            frameNumber: frameCount,
+            faces: latestDetections,
+            events: latestEvents,
+            frame_width: latestFrameWidth,
+            frame_height: latestFrameHeight
+          });
           } else {
             // ⚡ OPTIMIZED: Minimal JSON for empty frames (faster)
             metadataStr = `{"cameraId":"${cameraId}","frameNumber":${frameCount},"faces":[],"events":[],"frame_width":${latestFrameWidth},"frame_height":${latestFrameHeight}}`;
