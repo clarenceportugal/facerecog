@@ -27,6 +27,7 @@ import "react-calendar-heatmap/dist/styles.css";
 import "./CustomHeatmap.css";
 import axios from "axios";
 import Swal from "sweetalert2";
+import { API_BASE_URL } from "../utils/api";
 import FileUploadIcon from "@mui/icons-material/FileUpload";
 import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
@@ -285,7 +286,6 @@ const InfoModal: React.FC<ModalProps> = ({ open, onClose, faculty }) => {
 
     if (result.isConfirmed) {
       try {
-        const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
         await axios.delete(`${API_BASE_URL}/api/auth/schedules/${scheduleId}`);
         
         Swal.fire({

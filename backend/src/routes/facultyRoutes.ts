@@ -563,14 +563,23 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       } = req.body;
       
       console.log(`[API] Logging ${logType || 'TIME IN'} for: ${instructorName} (Late: ${isLate}) [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      console.log(`[API] Looking for schedule ID: ${scheduleId}`);
       
       // Use data service (works both online and offline)
       const schedule = await ScheduleService.findById(scheduleId);
       if (!schedule) {
-        console.log('[API] ❌ Schedule not found');
-        res.status(404).json({ message: 'Schedule not found' });
+        console.log(`[API] ❌ Schedule not found for ID: ${scheduleId}`);
+        console.log(`[API] ⚠️ This might happen if schedule was deleted or ID format is incorrect`);
+        // Return error but don't crash - allow system to continue
+        res.status(404).json({ 
+          message: 'Schedule not found',
+          scheduleId: scheduleId,
+          instructorName: instructorName
+        });
         return;
       }
+      
+      console.log(`[API] ✅ Found schedule: ${schedule.courseCode} - ${schedule.courseTitle}`);
 
       // Check if already logged in today for this schedule
       const today = new Date(timestamp);
@@ -621,14 +630,23 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
     try {
       const { instructorName, scheduleId, timestamp, totalMinutes } = req.body;
       console.log(`[API] Logging TIME OUT for: ${instructorName} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      console.log(`[API] Looking for schedule ID: ${scheduleId}`);
       
       // Use data service (works both online and offline)
       const schedule = await ScheduleService.findById(scheduleId);
       if (!schedule) {
-        console.log('[API] ❌ Schedule not found');
-        res.status(404).json({ message: 'Schedule not found' });
+        console.log(`[API] ❌ Schedule not found for ID: ${scheduleId}`);
+        console.log(`[API] ⚠️ This might happen if schedule was deleted or ID format is incorrect`);
+        // Return error but don't crash - allow system to continue
+        res.status(404).json({ 
+          message: 'Schedule not found',
+          scheduleId: scheduleId,
+          instructorName: instructorName
+        });
         return;
       }
+      
+      console.log(`[API] ✅ Found schedule: ${schedule.courseCode} - ${schedule.courseTitle}`);
 
       // Find today's time log
       const today = new Date(timestamp);
@@ -889,11 +907,20 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         };
       }
       
+      // ⚡ ENSURE courseCode is always included (fix for manually added schedules)
+      if (!scheduleObj.courseCode) {
+        // Try alternative field names
+        scheduleObj.courseCode = (scheduleObj as any).course_code || scheduleObj.courseCode || 'N/A';
+        console.log(`[API] ⚠️ courseCode was missing, using: ${scheduleObj.courseCode}`);
+      }
+      
       // Add validation flags to schedule object
       scheduleObj.isValidSchedule = isValidSchedule;
       scheduleObj.timeMatch = true;
       scheduleObj.roomMatch = roomMatch;
       scheduleObj.roomValidated = roomName ? true : false;
+      
+      console.log(`[API] 📋 Returning schedule with courseCode: ${scheduleObj.courseCode}`);
 
       // Return schedule even if room doesn't match (for backward compatibility)
       res.json({ 

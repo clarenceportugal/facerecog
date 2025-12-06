@@ -709,7 +709,7 @@ pathDefaults:
 paths:
   # Camera 1 - mycamera stream
   mycamera:
-    source: "rtsp://admin:Eduvision124@192.168.254.5:554/Streaming/Channels/101"
+    source: "rtsp://admin:Eduvision124@192.168.1.15:554/Streaming/Channels/101"
     # Use TCP transport (more reliable than UDP) - same as VLC
     rtspTransport: tcp
     # Pull stream immediately (not on-demand)

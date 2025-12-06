@@ -1182,7 +1182,7 @@ router.get(
   }
 );
 
-// DELETE SCHEDULE - WORKS OFFLINE
+// DELETE SCHEDULE - MONGODB-ONLY
 router.delete("/schedules/:id", async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -1198,7 +1198,8 @@ router.delete("/schedules/:id", async (req: Request, res: Response): Promise<voi
     
     console.log(`[DELETE SCHEDULE] Found schedule: ${schedule.courseCode} - ${schedule.courseTitle}`);
     
-    // Delete using data service (works both online and offline)
+    // ⚡ MONGODB-ONLY: Delete from MongoDB directly
+    // Note: Attendance logs that reference this schedule will keep the reference for historical purposes
     const deleted = await ScheduleService.delete(id);
     
     if (!deleted) {
@@ -1207,13 +1208,15 @@ router.delete("/schedules/:id", async (req: Request, res: Response): Promise<voi
       return;
     }
     
-    console.log(`[DELETE SCHEDULE] Successfully deleted schedule: ${id}`);
+    console.log(`[DELETE SCHEDULE] ✅ Successfully deleted schedule from MongoDB: ${id} (${schedule.courseCode})`);
+    console.log(`[DELETE SCHEDULE] Note: Python recognizer cache will refresh automatically within 5 minutes`);
+    
     res.json({ 
       success: true,
       message: "Schedule deleted successfully" 
     });
   } catch (error) {
-    console.error('[DELETE SCHEDULE] Error:', error);
+    console.error('[DELETE SCHEDULE] ❌ Error:', error);
     res.status(500).json({ 
       success: false,
       message: "Server error" 
@@ -1290,6 +1293,10 @@ router.post(
         semesterEndDate: formatDate(semesterEndDate),
         section,
       });
+
+      // ⚡ MONGODB-ONLY: Schedules are stored in MongoDB only
+      // The Python recognizer will fetch schedules directly from MongoDB via API
+      console.log(`[MONGODB] ✅ Schedule ${newSchedule.courseCode} saved to MongoDB`);
 
       res.status(201).json({
         message: "Schedule created successfully.",
@@ -1882,13 +1889,9 @@ router.post(
           }
         }
 
-        // Auto-sync all schedules to local database
-        try {
-          const { saveSchedulesBatchToLocalDB } = require("../utils/syncToLocalDB");
-          await saveSchedulesBatchToLocalDB(saved);
-        } catch (syncError) {
-          console.warn("[LOCAL DB] Failed to auto-sync schedules to local DB:", syncError);
-        }
+        // ⚡ MONGODB-ONLY: Schedules are stored in MongoDB only
+        // The Python recognizer will fetch schedules directly from MongoDB via API
+        console.log(`[MONGODB] ✅ ${saved.length} schedules saved to MongoDB`);
 
         res.status(replace ? 200 : 201).json({
           message: replace ? "Schedules replaced successfully" : "Schedules saved successfully",

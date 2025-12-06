@@ -107,6 +107,23 @@ def save_schedule(schedule_data: Dict):
         # Convert days dict to JSON string
         days_json = json.dumps(schedule_data.get('days', {}))
         
+        # ⚡ FIX: Format instructor_name as "Last, First" for consistent searching
+        instructor_name = schedule_data.get('instructor_name', '')
+        if not instructor_name and schedule_data.get('instructor'):
+            instructor = schedule_data.get('instructor', {})
+            if isinstance(instructor, dict):
+                first_name = instructor.get('first_name', '')
+                last_name = instructor.get('last_name', '')
+                if first_name and last_name:
+                    instructor_name = f"{last_name}, {first_name}"  # "Last, First" format
+            else:
+                # Fallback: try "First Last" format
+                instructor_name = f"{schedule_data.get('instructor', {}).get('first_name', '')} {schedule_data.get('instructor', {}).get('last_name', '')}"
+        
+        if not instructor_name:
+            # Final fallback
+            instructor_name = f"{schedule_data.get('instructor', {}).get('first_name', '')} {schedule_data.get('instructor', {}).get('last_name', '')}"
+        
         cursor.execute("""
             INSERT OR REPLACE INTO schedules 
             (id, instructor_id, instructor_name, course_code, course_title, room,
@@ -115,7 +132,7 @@ def save_schedule(schedule_data: Dict):
         """, (
             schedule_data.get('_id') or schedule_data.get('id'),
             schedule_data.get('instructor_id') or schedule_data.get('instructor', {}).get('_id', ''),
-            schedule_data.get('instructor_name') or f"{schedule_data.get('instructor', {}).get('first_name', '')} {schedule_data.get('instructor', {}).get('last_name', '')}",
+            instructor_name,
             schedule_data.get('courseCode') or schedule_data.get('course_code', ''),
             schedule_data.get('courseTitle') or schedule_data.get('course_title', ''),
             schedule_data.get('room', ''),
@@ -144,10 +161,23 @@ def save_schedules_batch(schedules: List[Dict]):
         batch_data = []
         for schedule_data in schedules:
             days_json = json.dumps(schedule_data.get('days', {}))
+            # ⚡ FIX: Format instructor_name as "Last, First" for consistent searching
+            instructor_name = schedule_data.get('instructor_name', '')
+            if not instructor_name and schedule_data.get('instructor'):
+                instructor = schedule_data.get('instructor', {})
+                if isinstance(instructor, dict):
+                    first_name = instructor.get('first_name', '')
+                    last_name = instructor.get('last_name', '')
+                    if first_name and last_name:
+                        instructor_name = f"{last_name}, {first_name}"  # "Last, First" format
+                else:
+                    # Fallback: try "First Last" format
+                    instructor_name = f"{schedule_data.get('instructor', {}).get('first_name', '')} {schedule_data.get('instructor', {}).get('last_name', '')}"
+            
             batch_data.append((
                 schedule_data.get('_id') or schedule_data.get('id'),
                 schedule_data.get('instructor_id') or schedule_data.get('instructor', {}).get('_id', ''),
-                schedule_data.get('instructor_name') or f"{schedule_data.get('instructor', {}).get('first_name', '')} {schedule_data.get('instructor', {}).get('last_name', '')}",
+                instructor_name or f"{schedule_data.get('instructor', {}).get('first_name', '')} {schedule_data.get('instructor', {}).get('last_name', '')}",
                 schedule_data.get('courseCode') or schedule_data.get('course_code', ''),
                 schedule_data.get('courseTitle') or schedule_data.get('course_title', ''),
                 schedule_data.get('room', ''),
@@ -187,14 +217,36 @@ def get_current_schedule(instructor_name: str, room_name: Optional[str] = None) 
         current_time = datetime.now().time()
         current_minutes = current_time.hour * 60 + current_time.minute
         
-        # Query schedules
-        query = """
+        # ⚡ FIX: Search with multiple name formats to handle "First Last" and "Last, First"
+        # Convert "Last, First" to "First Last" and vice versa for flexible matching
+        name_variations = [instructor_name]
+        
+        # If format is "Last, First", also try "First Last"
+        if ',' in instructor_name:
+            parts = instructor_name.split(',')
+            if len(parts) == 2:
+                last_name = parts[0].strip()
+                first_name = parts[1].strip()
+                name_variations.append(f"{first_name} {last_name}")
+                name_variations.append(f"{first_name}_{last_name}")
+        else:
+            # If format is "First Last" or "First_Last", also try "Last, First"
+            parts = instructor_name.replace('_', ' ').split()
+            if len(parts) >= 2:
+                first_name = parts[0]
+                last_name = parts[-1]
+                name_variations.append(f"{last_name}, {first_name}")
+                name_variations.append(f"{last_name}_{first_name}")
+        
+        # Query schedules with multiple name format variations (use OR for flexible matching)
+        name_conditions = ' OR '.join(['instructor_name LIKE ?'] * len(name_variations))
+        query = f"""
             SELECT * FROM schedules 
-            WHERE instructor_name LIKE ? 
+            WHERE ({name_conditions})
             AND semester_start_date <= ? 
             AND semester_end_date >= ?
         """
-        params = [f"%{instructor_name}%", today, today]
+        params = [f"%{name}%" for name in name_variations] + [today, today]
         
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -225,31 +277,28 @@ def get_current_schedule(instructor_name: str, room_name: Optional[str] = None) 
             # Check if current time is within schedule (including 30 min before class)
             time_before_class = start_minutes - 30
             if time_before_class <= current_minutes <= end_minutes:
-                # Check room if provided
-                schedule_room = (schedule.get('room') or '').strip().lower()
-                room_match = True
-                
-                if room_name:
-                    provided_room = room_name.strip().lower()
-                    room_match = (
-                        schedule_room == provided_room or
-                        schedule_room in provided_room or
-                        provided_room in schedule_room
-                    )
+                # ⚡ TIME-ONLY VALIDATION: isValidSchedule based ONLY on schedule time (not room)
+                # Green = within scheduled time, Yellow = outside scheduled time
                 
                 # Format schedule for return
+                # ⚡ ENSURE courseCode is always included (fix for manually added schedules)
+                course_code = schedule.get('course_code', '')
+                if not course_code:
+                    # Try alternative field names
+                    course_code = schedule.get('courseCode', 'N/A')
+                
                 result = {
                     '_id': schedule.get('id'),
-                    'courseCode': schedule.get('course_code'),
-                    'courseTitle': schedule.get('course_title'),
-                    'room': schedule.get('room'),
-                    'startTime': schedule.get('start_time'),
-                    'endTime': schedule.get('end_time'),
+                    'courseCode': course_code,  # ✅ Always include courseCode
+                    'courseTitle': schedule.get('course_title', ''),
+                    'room': schedule.get('room', ''),
+                    'startTime': schedule.get('start_time', ''),
+                    'endTime': schedule.get('end_time', ''),
                     'days': days,
-                    'instructor_name': schedule.get('instructor_name'),
-                    'isValidSchedule': room_match,
+                    'instructor_name': schedule.get('instructor_name', ''),
+                    'isValidSchedule': True,  # ✅ Always True if time matches (room check removed)
                     'timeMatch': True,
-                    'roomMatch': room_match if room_name else None
+                    'roomMatch': None  # Room validation disabled
                 }
                 
                 return result

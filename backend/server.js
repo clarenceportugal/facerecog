@@ -25,7 +25,7 @@ const USE_MEDIAMTX = false; // Set to false to use FFmpeg directly (no MediaMTX 
 const CAMERA_CONFIG = {
   camera1: {
     name: 'Camera 1',
-    rtspUrl: 'rtsp://admin:Eduvision124@192.168.254.5:554/Streaming/Channels/101',
+    rtspUrl: 'rtsp://admin:Eduvision124@192.168.1.15:554/Streaming/Channels/101',
     mediamtxStream: 'mycamera' // MediaMTX stream name (must match the path name in mediamtx.yml)
   },
   camera2: {
@@ -485,8 +485,8 @@ let pythonReady = false;
 let frameQueue = [];
 let latestDetections = [];
 let latestEvents = [];
-let latestFrameWidth = 1280;  // Default frame width (720p - optimized for smooth streaming on any WiFi)
-let latestFrameHeight = 720;  // Default frame height (720p - optimized for smooth streaming on any WiFi)
+let latestFrameWidth = 1920;  // Default frame width (Full HD - optimized for smooth streaming)
+let latestFrameHeight = 1080;  // Default frame height (Full HD - optimized for smooth streaming)
 
 // Spawn Python recognizer worker (ArcFace)
 console.log('Starting Python worker...');
@@ -568,13 +568,30 @@ rl.on('line', (line) => {
     return;
   }
   
-  // Filter out insightface/onnxruntime debug messages (they're not JSON)
-  // These messages start with common prefixes that aren't JSON
+  // ⚡ FILTER: Skip log messages that aren't JSON (common prefixes)
+  // Filter out insightface/onnxruntime debug messages and Python log messages
   if (line.startsWith('Applied providers:') ||
       line.startsWith('find model:') ||
       line.startsWith('set det-size:') ||
+      line.startsWith('[SYNC]') ||
+      line.startsWith('[LOCAL DB]') ||
+      line.startsWith('[CACHE]') ||
+      line.startsWith('[DATA SOURCE]') ||
+      line.startsWith('[INFO]') ||
+      line.startsWith('[DEBUG]') ||
+      line.startsWith('[WARN]') ||
+      line.startsWith('[ERROR]') ||
+      line.startsWith('[PROFILE]') ||
+      line.startsWith('[PERF]') ||
+      line.startsWith('[GPU]') ||
       line.match(/^\d{4}-\d{2}-\d{2}/)) { // Date timestamps
-    // These are debug messages from insightface/onnxruntime, ignore them
+    // These are log/debug messages, not JSON - ignore them silently
+    return;
+  }
+  
+  // Only try to parse if line looks like JSON (starts with { or [)
+  if (!line.startsWith('{') && !line.startsWith('[')) {
+    // Not JSON, probably a log message - ignore silently
     return;
   }
   
@@ -617,12 +634,10 @@ rl.on('line', (line) => {
       console.log(`[DEBUG] Received ${msg.events.length} event(s):`, msg.events.map(e => e.type).join(', '));
     }
   } catch (err) {
-    // Only log JSON errors for lines that look like they might be JSON
-    if (line.startsWith('{') || line.startsWith('[')) {
+    // Only log JSON errors for lines that actually look like JSON
+    // (log messages are already filtered out above)
       console.error('Bad JSON from Python:', err.message);
       console.error('Raw line (first 200 chars):', line.substring(0, 200));
-    }
-    // Otherwise, it's probably a debug message from insightface, ignore it
   }
 });
 
@@ -1000,65 +1015,30 @@ function startMediaMTXStream(ws, cameraId, streamName, cameraName, retryCount = 
   });
 }
 
-// ⚡ ADAPTIVE RESOLUTION: Track connection quality per camera
-const cameraConnectionQuality = {};  // cameraId -> { bufferAvg, skipRate, lastCheck, resolution }
-
-function startFFmpegStream(ws, cameraId, rtspUrl, cameraName, resolution = '720p') {
-  // ⚡ ADAPTIVE RESOLUTION: Start with resolution based on connection quality
-  // resolution: '720p' (1280x720) or '1080p' (1920x1080) or '1440p' (2560x1440)
-  let scaleFilter, frameWidth, frameHeight, quality;
-  
-  if (resolution === '1440p') {
-    scaleFilter = 'fps=20,scale=2560:1440';
-    frameWidth = 2560;
-    frameHeight = 1440;
-    quality = '4';  // Higher quality for high resolution
-  } else if (resolution === '1080p') {
-    scaleFilter = 'fps=18,scale=1920:1080';
-    frameWidth = 1920;
-    frameHeight = 1080;
-    quality = '5';  // Good quality for 1080p
-  } else {  // 720p (default)
-    scaleFilter = 'fps=12,scale=1280:720';  // Reduced to 12 FPS for smoother streaming
-    frameWidth = 1280;
-    frameHeight = 720;
-    quality = '7';  // Lower quality (higher number = lower quality) for ultra-smooth streaming
-  }
-  
-  // Initialize connection quality tracking
-  if (!cameraConnectionQuality[cameraId]) {
-    cameraConnectionQuality[cameraId] = {
-      bufferSamples: [],
-      skipCount: 0,
-      sentCount: 0,
-      lastCheck: Date.now(),
-      resolution: resolution,
-      resolutionChangeTime: Date.now()
-    };
-  }
-  
-  // ⚡ OPTIMIZED FOR ZERO DELAY + SMOOTH STREAMING (NO LAG/SKIP) + ADAPTIVE RESOLUTION
+function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
+  // ⚡ ZERO DELAY STREAMING - Optimized for real-time with no latency
   const ffmpeg = spawn('ffmpeg', [
     '-rtsp_transport', 'tcp',
-    '-fflags', 'nobuffer+fastseek+flush_packets+discardcorrupt+genpts',  // Combined flags for zero lag
+    '-fflags', 'nobuffer+fastseek+flush_packets+discardcorrupt+genpts',
     '-flags', 'low_delay',
     '-strict', 'experimental',
-    '-analyzeduration', '200',    // Very fast startup
-    '-probesize', '200',          // Very fast startup
+    '-analyzeduration', '0',      // Zero analysis delay
+    '-probesize', '32',           // Minimal probe size for instant start
     '-max_delay', '0',            // No delay buffering
     '-reorder_queue_size', '0',   // Disable reorder buffer
     '-i', rtspUrl,
     '-f', 'mjpeg',
-    '-q:v', quality,              // Adaptive quality based on resolution
-    '-vf', scaleFilter,           // Adaptive resolution based on connection speed
-    '-thread_queue_size', '1',    // Minimal queue = zero lag
-    '-vsync', 'cfr',              // Constant frame rate for smooth playback
+    '-q:v', '5',                  // Lower quality for zero delay (5 = faster encoding)
+    '-vf', 'fps=30,scale=1920:1080',  // 30 FPS + Full HD
+    '-thread_queue_size', '1',    // Minimal queue for zero delay (was 512)
+    '-vsync', '0',                // Passthrough timestamps (no sync delay)
+    '-preset', 'ultrafast',       // Fastest encoding
+    '-tune', 'zerolatency',       // Zero latency tuning
+    '-flush_packets', '1',        // Flush packets immediately
     '-'
   ], {
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  
-  console.log(`[${cameraName}] 🎥 Starting stream with ${resolution} resolution (${frameWidth}x${frameHeight})`);
 
   let buffer = Buffer.alloc(0);
   let frameCount = 0;
@@ -1067,30 +1047,14 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName, resolution = '720p
   let frontendFrameSkip = 0;  // Skip frames to frontend if WebSocket is slow
   const SOI = Buffer.from([0xFF, 0xD8]);
   const EOI = Buffer.from([0xFF, 0xD9]);
-  
-  // ⚡ ADAPTIVE FRAME INTERVAL: Match FPS based on resolution - optimized for no lag
-  let MIN_FRAME_INTERVAL_MS;
-  if (resolution === '1440p') {
-    MIN_FRAME_INTERVAL_MS = 50;  // 20 FPS for 1440p
-  } else if (resolution === '1080p') {
-    MIN_FRAME_INTERVAL_MS = 55;  // ~18 FPS for 1080p
-  } else {
-    MIN_FRAME_INTERVAL_MS = 83;  // 12 FPS for 720p (reduced for smoother streaming)
-  }
+  const MIN_FRAME_INTERVAL_MS = 33;  // 30 FPS (1000/30 = 33.3ms) for smooth real-time playback
 
   if (!ws.cameras) ws.cameras = {};
   ws.cameras[cameraId] = {
     ffmpeg,
     frameCount: 0,
-    name: cameraName,
-    resolution: resolution,
-    frameWidth: frameWidth,
-    frameHeight: frameHeight
+    name: cameraName
   };
-  
-  // Update global frame dimensions
-  latestFrameWidth = frameWidth;
-  latestFrameHeight = frameHeight;
 
   ws.send(JSON.stringify({
     cameraId,
@@ -1122,142 +1086,48 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName, resolution = '720p
       // ⚡ ALWAYS send to Python for detection (real-time, no skipping)
       sendFrameToPython(jpeg, cameraId);
 
-      // ⚡ REAL-TIME STREAMING: Send immediately if new detections, otherwise respect frame interval
+      // ⚡ ZERO DELAY: Send frames IMMEDIATELY without any buffering or delay
       if (ws.readyState === WebSocket.OPEN) {
-        const now = Date.now();
-        const timeSinceLastFrame = now - lastSentFrameTime;
-        const hasNewDetections = latestDetections.length > 0;
-        
-        // ⚡ ZERO LAG STREAMING: Ultra-aggressive frame sending for smooth streaming
-        // Send immediately if buffer is low OR has detections OR enough time has passed
-        const bufferVeryLow = ws.bufferedAmount < 48 * 1024;  // 48KB threshold (increased for smoother streaming)
-        const bufferLow = ws.bufferedAmount < 96 * 1024;  // 96KB - still safe to send
-        // Send if: buffer very low (immediate), OR (buffer low AND has detections), OR (normal interval)
-        if (bufferVeryLow || (bufferLow && hasNewDetections) || timeSinceLastFrame >= MIN_FRAME_INTERVAL_MS) {
-          try {
-            // ⚡ OPTIMIZED JSON: Compact JSON for faster transmission with multiple users
-          const metadataStr = JSON.stringify({
-            cameraId,
-            frameNumber: frameCount,
-            faces: latestDetections,
-            events: latestEvents,
-            frame_width: latestFrameWidth,
-            frame_height: latestFrameHeight
-            }, null, 0);  // Compact JSON (no spaces) for speed with multiple users
+        // ⚡ ULTRA-OPTIMIZED: Pre-allocate buffers and minimize JSON operations
+        try {
+          // ⚡ OPTIMIZED: Only stringify if there are detections or events (faster)
+          let metadataStr;
+          if (latestDetections.length > 0 || latestEvents.length > 0) {
+            metadataStr = JSON.stringify({
+              cameraId,
+              frameNumber: frameCount,
+              faces: latestDetections,
+              events: latestEvents,
+              frame_width: latestFrameWidth,
+              frame_height: latestFrameHeight
+            });
+          } else {
+            // ⚡ OPTIMIZED: Minimal JSON for empty frames (faster)
+            metadataStr = `{"cameraId":"${cameraId}","frameNumber":${frameCount},"faces":[],"events":[],"frame_width":${latestFrameWidth},"frame_height":${latestFrameHeight}}`;
+          }
           
-          const metadataLen = Buffer.alloc(4);
+          const metadataLen = Buffer.allocUnsafe(4);  // ⚡ OPTIMIZED: Use allocUnsafe (faster)
           metadataLen.writeUInt32BE(metadataStr.length, 0);
           
+          // ⚡ OPTIMIZED: Pre-calculate total length for single allocation
+          const totalLen = 4 + metadataStr.length + jpeg.length;
           const payload = Buffer.concat([
             metadataLen,
-            Buffer.from(metadataStr),
+            Buffer.from(metadataStr, 'utf8'),  // Explicit encoding (faster)
             jpeg
-          ]);
+          ], totalLen);
           
-            // ⚡ ADAPTIVE RESOLUTION: Track connection quality and adjust resolution
-            const quality = cameraConnectionQuality[cameraId];
-            const bufferSize = ws.bufferedAmount;
-            
-            // Track buffer size (keep last 50 samples)
-            quality.bufferSamples.push(bufferSize);
-            if (quality.bufferSamples.length > 50) {
-              quality.bufferSamples.shift();
-            }
-            
-            // Calculate average buffer size
-            const avgBuffer = quality.bufferSamples.reduce((a, b) => a + b, 0) / quality.bufferSamples.length;
-            
-            // ⚡ ULTRA-AGGRESSIVE BUFFER MANAGEMENT: Lower thresholds for zero lag
-            let bufferThreshold;
-            if (resolution === '1440p') {
-              bufferThreshold = 256 * 1024;  // 256KB for 1440p (reduced)
-            } else if (resolution === '1080p') {
-              bufferThreshold = 128 * 1024;  // 128KB for 1080p (reduced)
-            } else {
-              bufferThreshold = 64 * 1024;  // 64KB for 720p (ultra-low for zero lag)
-            }
-            
-            // ⚡ ZERO LAG LOGIC: Ultra-aggressive frame dropping to prevent lag
-            // Skip only if buffer is critically high to maintain smooth streaming
-            const criticalBuffer = bufferThreshold * 2;  // 2x threshold = critical (was 1.5x)
-            if (ws.bufferedAmount >= criticalBuffer) {
-              // Buffer critically high - skip to prevent lag
-              frontendFrameSkip++;
-              quality.skipCount++;
-              if (frontendFrameSkip % 150 === 0) {  // Log less frequently
-                console.warn(`[${cameraName}] WebSocket buffer critical (${Math.round(ws.bufferedAmount/1024)}KB) - skipping to prevent lag (${frontendFrameSkip} skipped)`);
-              }
-            } else {
-              // Buffer is OK - send frame immediately for smooth streaming
-              ws.send(payload, { binary: true, compress: false });  // No compression for speed
-              lastSentFrameTime = now;
-              frontendFrameSkip = 0;
-              quality.sentCount++;
-            }
-            
-            // ⚡ ADAPTIVE RESOLUTION: Check connection quality less frequently to avoid interruptions
-            const timeSinceLastCheck = now - quality.lastCheck;
-            const timeSinceResolutionChange = now - quality.resolutionChangeTime;
-            
-            // Check less frequently (every 10s) and wait longer after resolution change (20s) to prevent interruptions
-            if (timeSinceLastCheck >= 10000 && timeSinceResolutionChange >= 20000) {
-              const skipRate = quality.sentCount > 0 ? quality.skipCount / (quality.sentCount + quality.skipCount) : 0;
-              // More conservative thresholds to prevent frequent resolution changes
-              const isSlowConnection = avgBuffer > bufferThreshold * 0.9 || skipRate > 0.4;
-              const isFastConnection = avgBuffer < bufferThreshold * 0.2 && skipRate < 0.05;
-              
-              let newResolution = resolution;
-              
-              if (isSlowConnection && resolution !== '720p') {
-                // Connection is slow - downgrade to 720p
-                newResolution = '720p';
-                console.log(`[${cameraName}] 📉 Connection slow (buffer: ${Math.round(avgBuffer/1024)}KB, skip rate: ${(skipRate*100).toFixed(1)}%) - Switching to 720p for smooth streaming`);
-              } else if (isFastConnection && resolution === '720p' && timeSinceResolutionChange >= 30000) {
-                // Connection is fast and stable for 30s - upgrade to 1080p
-                newResolution = '1080p';
-                console.log(`[${cameraName}] 📈 Connection fast (buffer: ${Math.round(avgBuffer/1024)}KB, skip rate: ${(skipRate*100).toFixed(1)}%) - Upgrading to 1080p for clearer stream`);
-              }
-              
-              if (newResolution !== resolution) {
-                // Restart FFmpeg with new resolution
-                quality.resolution = newResolution;
-                quality.resolutionChangeTime = now;
-                quality.bufferSamples = [];
-                quality.skipCount = 0;
-                quality.sentCount = 0;
-                
-                // Mark as resolution change to avoid error message
-                isResolutionChange = true;
-                
-                // Kill current FFmpeg
-                ffmpeg.kill();
-                
-                // Restart with new resolution after a short delay
-                setTimeout(() => {
-                  startFFmpegStream(ws, cameraId, rtspUrl, cameraName, newResolution);
-                }, 1000);
-                
-                return;  // Exit current stream handler
-              }
-              
-              quality.lastCheck = now;
-            }
+          // ⚡ ZERO DELAY: Send immediately - no buffering checks for real-time streaming
+          ws.send(payload, { binary: true, compress: false });  // No compression for speed
+          lastSentFrameTime = Date.now();
+          frontendFrameSkip = 0;
           
-          // Clear events after sending to avoid duplicates
+          // ⚡ OPTIMIZED: Clear events efficiently (reuse array)
           if (latestEvents.length > 0) {
-            latestEvents = [];
+            latestEvents.length = 0;  // Faster than reassignment
           }
         } catch (err) {
           console.error('Error sending frame:', err);
-          }
-        } else {
-          // Frame came too fast - only skip if buffer is getting high
-          // Allow faster frame rate if buffer is low for smoother streaming
-          if (ws.bufferedAmount > 64 * 1024) {  // Only skip if buffer > 64KB
-            frontendFrameSkip++;
-            // Frame dropped to prevent lag
-          }
-          // If buffer is low, we can process frames faster for smoother streaming
         }
       }
 
@@ -1279,14 +1149,7 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName, resolution = '720p
     }
   });
 
-  // Track if this is a resolution change restart
-  let isResolutionChange = false;
-  
   ffmpeg.on('exit', (code, signal) => {
-    if (isResolutionChange) {
-      console.log(`[${cameraName}] FFmpeg stopped for resolution change`);
-      return;  // Don't send error, it's intentional
-    }
     console.log(`[${cameraName}] FFmpeg exited: code=${code}, signal=${signal}`);
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({

@@ -201,21 +201,37 @@ export async function syncAllDataToOffline(): Promise<SyncResult> {
 
     // 7. Sync Schedules
     console.log('[SYNC] Syncing schedules...');
-    const schedules = await Schedule.find() as any[];
+    const schedules = await Schedule.find().populate('instructor') as any[];
     for (const schedule of schedules) {
       try {
+        // ⚡ FIX: Get instructor name in "Last, First" format for consistent searching
+        let instructor_name = '';
+        if (schedule.instructor) {
+          if (typeof schedule.instructor === 'object' && schedule.instructor.first_name && schedule.instructor.last_name) {
+            instructor_name = `${schedule.instructor.last_name}, ${schedule.instructor.first_name}`;
+          } else {
+            // Fallback: try to get from User collection
+            const User = mongoose.model('User');
+            const instructor = await User.findById(schedule.instructor);
+            if (instructor && instructor.first_name && instructor.last_name) {
+              instructor_name = `${instructor.last_name}, ${instructor.first_name}`;
+            }
+          }
+        }
+        
         const stmt = db.prepare(`
           INSERT OR REPLACE INTO schedules (
-            id, course_title, course_code, instructor_id, room, start_time,
+            id, course_title, course_code, instructor_id, instructor_name, room, start_time,
             end_time, semester_start_date, semester_end_date, section_id, days,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         `);
         stmt.run(
           schedule._id.toString(),
           schedule.courseTitle,
           schedule.courseCode,
           schedule.instructor.toString(),
+          instructor_name,  // ⚡ CRITICAL: Include instructor_name for searching
           schedule.room,
           schedule.startTime,
           schedule.endTime,

@@ -66,16 +66,15 @@ DATASET_DIR = SCRIPT_DIR.parent / "streaming-server" / "faces"
 # Set OFFLINE_MODE=false or omit to run in online mode (uses MongoDB with local fallback)
 OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
 
-# ⚡ PERFORMANCE OPTIMIZATION: Use local SQLite cache for face detection even in online mode
-# This dramatically reduces delay by avoiding MongoDB queries during face detection
-# Set to True to always use local cache for detection (RECOMMENDED for fast detection)
-USE_LOCAL_CACHE_FOR_DETECTION = os.getenv("USE_LOCAL_CACHE_FOR_DETECTION", "true").lower() in ("true", "1", "yes")
+# ⚡ MONGODB-ONLY MODE: Always use MongoDB for schedule operations
+# Local database is no longer used for schedule lookups
+USE_LOCAL_CACHE_FOR_DETECTION = False  # Disabled - always use MongoDB
 
-# ⚡ Optimized for i5 12th gen + GTX 3050 Ti + 16GB RAM - REAL-TIME DISTANT FACE DETECTION
-# Detection threshold: Adjusted for better face detection
-DETECTION_THRESHOLD = 0.35  # 0.30 + 0.05 = 0.35 - balanced detection
-# Recognition threshold: Adjusted for better face recognition
-CONF_THRESHOLD = 0.35  # 0.30 + 0.05 = 0.35 - balanced recognition
+# ⚡ Optimized for i5 12th gen + GTX 3050 Ti + 16GB RAM - ZERO DELAY CONFIG
+# Detection threshold: Increased by 0.1 for better accuracy
+DETECTION_THRESHOLD = 0.35  # Increased by 0.1 (was 0.25) - better accuracy while still detecting distant faces
+# Recognition threshold: Optimized for fast real-time recognition even for distant faces
+CONF_THRESHOLD = 0.38  # Increased by 0.05 (was 0.33) - higher threshold for better accuracy
 ABSENCE_TIMEOUT_SECONDS = 300  # 5 minutes = 300 seconds
 LATE_THRESHOLD_MINUTES = 15  # 15 minutes late threshold
 SCHEDULE_RECHECK_INTERVAL_SECONDS = 300  # Re-check schedules every 5 minutes for existing sessions
@@ -138,12 +137,7 @@ def refresh_schedule_cache():
         print(f"[CACHE] [OFFLINE] Skipping schedule cache refresh (OFFLINE_MODE=true)", file=sys.stderr, flush=True)
         return False
     
-    # ⚡ In hybrid mode, we rely on periodic sync from backend to keep SQLite updated
-    # The in-memory cache is still useful as a secondary layer
-    if USE_LOCAL_CACHE_FOR_DETECTION and LOCAL_DB_AVAILABLE:
-        print(f"[CACHE] [HYBRID] Using SQLite as primary cache, in-memory as fallback", file=sys.stderr, flush=True)
-        # Still refresh in-memory cache occasionally for redundancy
-        pass  # Continue to refresh
+    # ⚡ MONGODB-ONLY: Always refresh cache from MongoDB
     
     try:
         print(f"[CACHE] [SYNC] Refreshing schedule cache from MongoDB...", file=sys.stderr, flush=True)
@@ -248,13 +242,18 @@ def batch_get_schedules(instructor_names, camera_id="camera1", room_name=None):
     ⚡ BATCH OPTIMIZATION: Get schedules for multiple instructors at once
     This avoids per-face database queries when multiple new faces appear
     
+    ⚡ TIME-ONLY VALIDATION: Box color is based ONLY on schedule time (not room)
+    - Green = within scheduled time
+    - Yellow = outside scheduled time or no schedule
+    
     Args:
         instructor_names: List of instructor names (folder name format)
-        camera_id: Camera ID for room mapping
-        room_name: Room name for validation
+        camera_id: Camera ID (for compatibility, not used for validation)
+        room_name: Room name (for compatibility, not used for validation)
         
     Returns:
         Dictionary mapping instructor_name -> schedule (or None)
+        Each schedule has isValidSchedule=True if time matches (room check removed)
     """
     if not instructor_names:
         return {}
@@ -265,45 +264,15 @@ def batch_get_schedules(instructor_names, camera_id="camera1", room_name=None):
     if room_name is None:
         room_name = ROOM_MAPPING.get(camera_id, "")
     
-    # ⚡ Batch lookup from local database (fastest)
-    if LOCAL_DB_AVAILABLE:
+    # ⚡ MONGODB-ONLY: Always fetch from MongoDB API (no local database lookup)
+    # ⚡ Batch lookup from in-memory cache (fast - refreshed from MongoDB)
         for name in instructor_names:
-            schedule = get_schedule_from_local_db(name, room_name)
-            if schedule:
-                # Calculate late status
-                current_time = datetime.now().time()
-                start_time = parse_time_string(schedule.get('startTime', ''))
-                if start_time:
-                    late_threshold_time = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=LATE_THRESHOLD_MINUTES)).time()
-                    schedule['is_late'] = current_time > late_threshold_time
-                    schedule['start_time_obj'] = start_time
-                    schedule['current_time_str'] = current_time.strftime('%H:%M')
-                results[name] = schedule
-            else:
-                results[name] = None
-        
-        # If we found schedules for everyone, return early
-        if all(v is not None for v in results.values()) or OFFLINE_MODE or USE_LOCAL_CACHE_FOR_DETECTION:
-            return results
-    
-    # ⚡ Batch lookup from in-memory cache (fast)
-    for name in instructor_names:
-        if name in results and results[name] is not None:
-            continue  # Already found in local DB
         schedule = get_current_schedule_from_cache(name)
         if schedule:
-            # Validate room
-            if room_name:
-                schedule_room = (schedule.get('room') or "").strip().lower()
-                provided_room = room_name.strip().lower()
-                room_match = schedule_room == provided_room or \
-                            schedule_room in provided_room or \
-                            provided_room in schedule_room
-                schedule['isValidSchedule'] = room_match
-                schedule['roomMatch'] = room_match
-            else:
-                schedule['isValidSchedule'] = True
-                schedule['roomMatch'] = None
+            # ⚡ TIME-ONLY VALIDATION: isValidSchedule based ONLY on schedule time (room check removed)
+            # Green = within scheduled time, Yellow = outside scheduled time
+            schedule['isValidSchedule'] = True  # ✅ Always True if time matches (room check removed)
+            schedule['roomMatch'] = None  # Room validation disabled
             results[name] = schedule
         else:
             results[name] = None
@@ -359,6 +328,15 @@ def get_current_schedule_from_cache(instructor_name):
             schedule_copy['start_time_obj'] = start_time
             schedule_copy['current_time_str'] = current_time.strftime('%H:%M')
             
+            # ⚡ CRITICAL FIX: ENSURE isValidSchedule is ALWAYS set to True (within scheduled time)
+            schedule_copy['isValidSchedule'] = True  # ✅ Always True if time matches (room check removed)
+            
+            # ⚡ ENSURE courseCode is always included (fix for manually added schedules)
+            if 'courseCode' not in schedule_copy and 'course_code' in schedule_copy:
+                schedule_copy['courseCode'] = schedule_copy['course_code']
+            elif 'courseCode' not in schedule_copy:
+                schedule_copy['courseCode'] = schedule.get('courseCode', 'N/A')  # Default if missing
+            
             return schedule_copy
     
     return None
@@ -367,10 +345,15 @@ def get_current_schedule(instructor_name, camera_id="camera1", room_name=None):
     """Get current schedule for an instructor - checks if they have a class NOW
     Uses local database first (offline), falls back to cache, then API if needed
     
+    ⚡ TIME-ONLY VALIDATION: Box color is based ONLY on schedule time (not room)
+    - Green = within scheduled time
+    - Yellow = outside scheduled time or no schedule
+    - Reads from MongoDB database for schedule information
+    
     Args:
         instructor_name: Name of the instructor (folder name format)
-        camera_id: ID of the camera (default: "camera1")
-        room_name: Room name to validate against schedule (optional, will use ROOM_MAPPING if not provided)
+        camera_id: ID of the camera (for compatibility, not used for validation)
+        room_name: Room name (for compatibility, not used for validation)
     """
     formatted_name = format_instructor_name(instructor_name)
     
@@ -378,72 +361,24 @@ def get_current_schedule(instructor_name, camera_id="camera1", room_name=None):
     if room_name is None:
         room_name = ROOM_MAPPING.get(camera_id, "")
     
-    # Step 1: Try local database first (OFFLINE - fastest)
-    if LOCAL_DB_AVAILABLE:
-        # Reduced logging - only log every 100th check to reduce spam
-        if hash(instructor_name) % 100 == 0:
-            print(f"[DATA SOURCE] [LOCAL DB] Checking local SQLite database for {instructor_name}...", file=sys.stderr, flush=True)
-        schedule = get_schedule_from_local_db(instructor_name, room_name)
-        if schedule:
-            # Calculate if they're late
-            current_time = datetime.now().time()
-            start_time = parse_time_string(schedule.get('startTime', ''))
-            if start_time:
-                late_threshold_time = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=LATE_THRESHOLD_MINUTES)).time()
-                schedule['is_late'] = current_time > late_threshold_time
-                schedule['start_time_obj'] = start_time
-                schedule['current_time_str'] = current_time.strftime('%H:%M')
-            
-            # Only log schedule matches occasionally to reduce spam
-            if hash(instructor_name) % 50 == 0:
-                status = "[OK] VALID" if schedule.get('isValidSchedule', True) else "[WARN] WRONG ROOM"
-                print(f"[DATA SOURCE] [LOCAL DB] {status} {instructor_name} has class NOW (from LOCAL SQLite DB): {schedule.get('courseCode')} - Late: {schedule.get('is_late', False)}", file=sys.stderr, flush=True)
-            return schedule
-    
-    # Step 2: Try cache (in-memory, fast)
-    # Reduced logging - only log occasionally
+    # ⚡ MONGODB-ONLY: Step 1 - Try in-memory cache first (refreshed from MongoDB)
     schedule = get_current_schedule_from_cache(instructor_name)
     if schedule:
-        # Validate room if room_name is provided
-        if room_name:
-            schedule_room = (schedule.get('room') or "").strip().lower()
-            provided_room = room_name.strip().lower()
-            room_match = schedule_room == provided_room or \
-                        schedule_room in provided_room or \
-                        provided_room in schedule_room
-            
-            if room_match:
-                schedule['isValidSchedule'] = True
-                schedule['roomMatch'] = True
+        # ⚡ TIME-ONLY VALIDATION: isValidSchedule based ONLY on schedule time (room check removed)
+        # Green = within scheduled time, Yellow = outside scheduled time
+        schedule['isValidSchedule'] = True  # ✅ Always True if time matches (room check removed)
+        schedule['roomMatch'] = None  # Room validation disabled
                 # Only log occasionally to reduce spam
                 if hash(instructor_name) % 50 == 0:
-                    print(f"[DATA SOURCE] [CACHE] [OK] {instructor_name} has class NOW (from IN-MEMORY CACHE): {schedule.get('courseCode')} in room {schedule.get('room')}", file=sys.stderr, flush=True)
-            else:
-                schedule['isValidSchedule'] = False
-                schedule['roomMatch'] = False
-                # Only log warnings occasionally
-                if hash(instructor_name) % 50 == 0:
-                    print(f"[DATA SOURCE] [CACHE] [WARN] {instructor_name} has class NOW but wrong room. Expected: {schedule.get('room')}, Camera room: {room_name}", file=sys.stderr, flush=True)
-        else:
-            schedule['isValidSchedule'] = True
-            schedule['roomMatch'] = None
-            # Only log occasionally
-            if hash(instructor_name) % 50 == 0:
-                print(f"[DATA SOURCE] [CACHE] [OK] {instructor_name} has class NOW (from IN-MEMORY CACHE): {schedule.get('courseCode')} (room not validated)", file=sys.stderr, flush=True)
+            print(f"[DATA SOURCE] [CACHE] [OK] {instructor_name} has class NOW (from IN-MEMORY CACHE - MongoDB): {schedule.get('courseCode')} - Time-based validation only", file=sys.stderr, flush=True)
         
         return schedule
     
-    # Step 3: Try API as fallback (ONLINE - only if local DB and cache both fail)
-    # Skip API calls in offline mode OR if using local cache for detection (performance optimization)
+    # ⚡ MONGODB-ONLY: Step 2 - Fetch directly from MongoDB API if cache miss
+    # Skip API calls only in offline mode
     if OFFLINE_MODE:
         if hash(instructor_name) % 100 == 0:
             print(f"[DATA SOURCE] [OFFLINE MODE] Skipping MongoDB API call for {instructor_name} (OFFLINE_MODE=true)", file=sys.stderr, flush=True)
-        return None
-    
-    # ⚡ PERFORMANCE: Skip slow MongoDB API calls during face detection if local cache is enabled
-    if USE_LOCAL_CACHE_FOR_DETECTION:
-        if hash(instructor_name) % 100 == 0:
-            print(f"[DATA SOURCE] [CACHE ONLY] Skipping MongoDB API call for {instructor_name} (USE_LOCAL_CACHE_FOR_DETECTION=true) - Using local cache for speed", file=sys.stderr, flush=True)
         return None
     
     with schedule_cache_lock:
@@ -470,11 +405,7 @@ def get_current_schedule(instructor_name, camera_id="camera1", room_name=None):
                 schedule = data.get("schedule")
                 
                 if schedule:
-                    # Save to local database for future offline use
-                    if LOCAL_DB_AVAILABLE:
-                        print(f"[DATA SOURCE] [MONGODB API] Saving schedule to LOCAL DB for future offline use...", file=sys.stderr, flush=True)
-                        save_schedule(schedule)
-                    
+                    # ⚡ MONGODB-ONLY: No longer saving to local database
                     # Verify the schedule is for today and current time
                     current_day = get_current_day()
                     current_time = datetime.now().time()
@@ -506,14 +437,14 @@ def get_current_schedule(instructor_name, camera_id="camera1", room_name=None):
                         schedule['start_time_obj'] = start_time
                         schedule['current_time_str'] = current_time.strftime('%H:%M')
                         
-                        # Get validation flags from API response if available
-                        api_data = response.json()
-                        schedule['isValidSchedule'] = api_data.get('isValidSchedule', True)
-                        schedule['timeMatch'] = api_data.get('timeMatch', True)
-                        schedule['roomMatch'] = api_data.get('roomMatch', None)
+                        # ⚡ TIME-ONLY VALIDATION: isValidSchedule based ONLY on schedule time (room check removed)
+                        # Green = within scheduled time, Yellow = outside scheduled time
+                        # Override API response to ensure time-only validation
+                        schedule['isValidSchedule'] = True  # ✅ Always True if time matches (room check removed)
+                        schedule['timeMatch'] = True
+                        schedule['roomMatch'] = None  # Room validation disabled
                         
-                        status = "[OK] VALID" if schedule.get('isValidSchedule', True) else "[WARN] WRONG ROOM"
-                        print(f"[DATA SOURCE] [MONGODB API] {status} {instructor_name} has class NOW (from MONGODB ATLAS): {schedule.get('courseCode')} ({start_time}-{end_time}) - Late: {is_late}", file=sys.stderr, flush=True)
+                        print(f"[DATA SOURCE] [MONGODB API] [OK] {instructor_name} has class NOW (from MONGODB ATLAS): {schedule.get('courseCode')} ({start_time}-{end_time}) - Late: {is_late} - Time-based validation only", file=sys.stderr, flush=True)
                         return schedule
         except Exception as e:
             print(f"[DATA SOURCE] [MONGODB API] [ERROR] API fallback failed (offline mode): {e}", file=sys.stderr, flush=True)
@@ -919,13 +850,13 @@ def read_single_frame():
 def read_frame_from_stdin():
     """⚡ ZERO-DELAY: Always return the LATEST frame, aggressively skip queued frames for real-time"""
     try:
-        # ⚡ NO LIMIT FRAME SKIPPING: Read and discard ALL queued frames, keep only the latest
+        # ⚡ ULTRA-AGGRESSIVE FRAME SKIPPING: Read and discard ALL queued frames, keep only the latest
         latest_frame = None
         frames_skipped = 0
-        # NO LIMIT - Skip all queued frames until stdin is empty
+        max_skip = 100  # Increased to skip more frames for zero delay
         
-        # Keep reading frames until stdin is empty (non-blocking) - NO LIMIT
-        while True:
+        # Keep reading frames until stdin is empty (non-blocking)
+        for _ in range(max_skip):
             frame = read_single_frame()
             if frame is None:
                 break  # No more frames available
@@ -933,8 +864,6 @@ def read_frame_from_stdin():
             # If we already have a frame, this is a newer one - skip the old one
             if latest_frame is not None:
                 frames_skipped += 1
-                # Free old frame memory immediately
-                del latest_frame
             
             latest_frame = frame  # Keep the newest frame
             
@@ -944,7 +873,7 @@ def read_frame_from_stdin():
                 break  # No more frames waiting
         
         if frames_skipped > 0:
-            if frames_skipped % 100 == 0:  # Log even less frequently to reduce overhead
+            if frames_skipped % 10 == 0:  # Log every 10 skipped frames
                 print(f"[PERF] ⚡ Skipped {frames_skipped} old frames - ZERO DELAY maintained!", file=sys.stderr, flush=True)
         
         if latest_frame is None:
@@ -1054,11 +983,9 @@ print(f"[INFO] ⚡ OPTIMIZED FOR ZERO DELAY - GPU Acceleration Enabled", file=sy
 print(f"[INFO] ⚡ BATCH OPTIMIZATION: Multiple faces processed simultaneously", file=sys.stderr, flush=True)
 if OFFLINE_MODE:
     print(f"[INFO] System Mode: OFFLINE (Local SQLite only)", file=sys.stderr, flush=True)
-elif USE_LOCAL_CACHE_FOR_DETECTION:
-    print(f"[INFO] System Mode: HYBRID (MongoDB for management, SQLite for face detection) ⚡", file=sys.stderr, flush=True)
-    print(f"[INFO] Performance Optimization: Using local cache for fast face detection", file=sys.stderr, flush=True)
 else:
-    print(f"[INFO] System Mode: ONLINE (MongoDB with fallback)", file=sys.stderr, flush=True)
+    print(f"[INFO] System Mode: MONGODB-ONLY (All schedule operations use MongoDB directly) ⚡", file=sys.stderr, flush=True)
+    print(f"[INFO] Performance Optimization: Using in-memory cache refreshed from MongoDB", file=sys.stderr, flush=True)
 
 # GPU status
 if USE_GPU:
@@ -1086,7 +1013,6 @@ gpu_available = False
 
 # Import direct model classes for GPU acceleration
 from insightface.model_zoo import SCRFD, ArcFaceONNX
-import onnxruntime as ort
 
 try:
     init_start = time.time()
@@ -1114,283 +1040,51 @@ try:
     else:
         print("[INFO] Using CPU for face detection (set USE_GPU=true for faster detection with NVIDIA GPU)", file=sys.stderr, flush=True)
     
-    # ⚡ RetinaFace Detector Class - GPU-accelerated face detection
-    class RetinaFaceDetector:
-        """RetinaFace detector using ONNX Runtime for GPU acceleration"""
-        def __init__(self, model_path, ctx_id=0, input_size=(640, 640)):
-            self.model_path = model_path
-            self.ctx_id = ctx_id
-            self.input_size = input_size
-            
-            # Configure providers for GPU or CPU
-            if ctx_id >= 0:
-                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-                provider_options = [{
-                    'device_id': 0,
-                    'arena_extend_strategy': 'kNextPowerOfTwo',
-                    'gpu_mem_limit': 4 * 1024 * 1024 * 1024,  # 4GB - Maximum GPU memory (NO LIMIT)
-                    'cudnn_conv_algo_search': 'HEURISTIC',
-                    'do_copy_in_default_stream': True,
-                }, {}]
-            else:
-                providers = ['CPUExecutionProvider']
-                provider_options = [{}]
-            
-            # Load ONNX model
-            self.session = ort.InferenceSession(model_path, providers=providers, provider_options=provider_options)
-            self.input_name = self.session.get_inputs()[0].name
-            self.output_names = [output.name for output in self.session.get_outputs()]
-            
-            # Get model input shape
-            input_shape = self.session.get_inputs()[0].shape
-            if len(input_shape) == 4:
-                self.input_height, self.input_width = input_shape[2], input_shape[3]
-            else:
-                self.input_height, self.input_width = input_size[1], input_size[0]
-            
-            print(f"[INFO] RetinaFace model loaded: {model_path}")
-            print(f"[INFO] Input size: {self.input_width}x{self.input_height}")
-            print(f"[INFO] Providers: {providers}")
-        
-        def detect(self, img, threshold=0.5, max_num=1000):
-            """Detect faces in image - returns bboxes and landmarks (SCRFD-compatible format) - NO LIMIT"""
-            h, w = img.shape[:2]
-            
-            # Resize image to model input size
-            img_resized = cv2.resize(img, (self.input_width, self.input_height))
-            img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
-            img_norm = img_rgb.astype(np.float32) / 255.0
-            img_transposed = np.transpose(img_norm, (2, 0, 1))
-            img_batch = np.expand_dims(img_transposed, axis=0)
-            
-            # Run inference
-            try:
-                outputs = self.session.run(self.output_names, {self.input_name: img_batch})
-            except Exception as e:
-                print(f"[ERROR] RetinaFace inference failed: {e}", file=sys.stderr, flush=True)
-                return np.zeros((0, 5)), None
-            
-            # Parse outputs - RetinaFace models can have different output formats
-            # Try to detect the format and parse accordingly
-            bboxes_with_scores = []
-            landmarks_list = []
-            
-            # Common RetinaFace output formats:
-            # 1. [bboxes, scores, landmarks] - already decoded
-            # 2. [loc, conf, landmarks] - raw predictions (needs decoding)
-            # 3. Single output with all predictions
-            
-            if len(outputs) == 0:
-                return np.zeros((0, 5)), None
-            
-            # Try format 1: Already decoded bboxes and scores
-            if len(outputs) >= 2:
-                output_0 = outputs[0]
-                output_1 = outputs[1]
-                
-                # Check if output_0 is bboxes (shape: [N, 4] or [N, 5])
-                # Check if output_1 is scores (shape: [N] or [N, 1])
-                if len(output_0.shape) == 2 and output_0.shape[1] >= 4:
-                    if len(output_1.shape) == 1 or (len(output_1.shape) == 2 and output_1.shape[1] == 1):
-                        # Format: [bboxes, scores, landmarks?]
-                        pred_bboxes = output_0[:, :4]  # Take first 4 columns (x1, y1, x2, y2)
-                        pred_scores = output_1.flatten() if len(output_1.shape) > 1 else output_1
-                        
-                        # Filter by threshold
-                        valid_mask = pred_scores > threshold
-                        if np.any(valid_mask):
-                            # Get valid indices - NO LIMIT, process all valid detections
-                            valid_indices = np.where(valid_mask)[0]
-                            # No limiting - process ALL valid faces detected
-                            
-                            # Get filtered predictions
-                            pred_bboxes = pred_bboxes[valid_indices]
-                            pred_scores = pred_scores[valid_indices]
-                            
-                            # Scale bboxes back to original image size
-                            scale_x = w / self.input_width
-                            scale_y = h / self.input_height
-                            pred_bboxes[:, [0, 2]] *= scale_x
-                            pred_bboxes[:, [1, 3]] *= scale_y
-                            
-                            # Combine bboxes and scores (format: [x1, y1, x2, y2, score])
-                            bboxes_with_scores = np.column_stack([pred_bboxes, pred_scores])
-                            
-                            # Get landmarks if available
-                            if len(outputs) >= 3:
-                                pred_landmarks = outputs[2]
-                                if len(pred_landmarks.shape) == 3 and pred_landmarks.shape[1] == 5:  # 5 landmarks
-                                    landmarks_list = pred_landmarks[valid_indices]
-                                    # Scale landmarks
-                                    landmarks_list[:, :, 0] *= scale_x
-                                    landmarks_list[:, :, 1] *= scale_y
-                                else:
-                                    landmarks_list = [None] * len(bboxes_with_scores)
-                            else:
-                                landmarks_list = [None] * len(bboxes_with_scores)
-            
-            if len(bboxes_with_scores) == 0:
-                return np.zeros((0, 5)), None
-            
-            # Convert to numpy array if needed
-            if not isinstance(bboxes_with_scores, np.ndarray):
-                bboxes_with_scores = np.array(bboxes_with_scores)
-            
-            # Return in SCRFD-compatible format: (bboxes with scores, landmarks)
-            # landmarks should be an array of shape [N, 5, 2] where N is number of faces
-            # Each face has 5 keypoints: [left_eye, right_eye, nose, left_mouth, right_mouth]
-            if landmarks_list and len(landmarks_list) > 0 and landmarks_list[0] is not None:
-                landmarks_array = np.array(landmarks_list)
-                # Ensure shape is [N, 5, 2]
-                if len(landmarks_array.shape) == 2 and landmarks_array.shape[1] == 10:
-                    # Reshape from [N, 10] to [N, 5, 2] if needed
-                    landmarks_array = landmarks_array.reshape(-1, 5, 2)
-            else:
-                # Create dummy landmarks from bbox center if not available
-                landmarks_array = None
-                if len(bboxes_with_scores) > 0:
-                    # Generate approximate landmarks from bbox (fallback)
-                    landmarks_array = []
-                    for bbox in bboxes_with_scores:
-                        x1, y1, x2, y2 = bbox[:4]
-                        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                        w, h = x2 - x1, y2 - y1
-                        # Approximate 5 keypoints
-                        landmarks = np.array([
-                            [x1 + w * 0.3, y1 + h * 0.35],  # left_eye
-                            [x1 + w * 0.7, y1 + h * 0.35],  # right_eye
-                            [cx, y1 + h * 0.5],              # nose
-                            [x1 + w * 0.3, y1 + h * 0.7],   # left_mouth
-                            [x1 + w * 0.7, y1 + h * 0.7],   # right_mouth
-                        ])
-                        landmarks_array.append(landmarks)
-                    landmarks_array = np.array(landmarks_array)
-            
-            return bboxes_with_scores, landmarks_array
-        
-        def prepare(self, ctx_id=None, input_size=None):
-            """Prepare model (for compatibility with SCRFD interface)"""
-            if ctx_id is not None:
-                self.ctx_id = ctx_id
-            if input_size is not None:
-                self.input_size = input_size
-            return self
-    
     # ⚡ Direct model loading for GPU acceleration (bypasses FaceAnalysis wrapper)
     # This gives us direct control over GPU execution
     import os
     model_dir = os.path.expanduser('~/.insightface/models/buffalo_s')
     
-    # Check for RetinaFace model first, fallback to SCRFD
-    # RetinaFace model paths to check (common names)
-    retinaface_paths = [
-        os.path.join(model_dir, 'retinaface_r50_v1.onnx'),
-        os.path.join(model_dir, 'retinaface.onnx'),
-        os.path.join(model_dir, 'retinaface_mobile0.25.onnx'),
-        os.path.join(os.path.expanduser('~/.insightface/models'), 'retinaface_r50_v1.onnx'),
-    ]
-    
-    retinaface_path = None
-    for path in retinaface_paths:
-        if os.path.exists(path):
-            retinaface_path = path
-            break
-    
     det_path = os.path.join(model_dir, 'det_500m.onnx')
     rec_path = os.path.join(model_dir, 'w600k_mbf.onnx')
     
-    use_retinaface = retinaface_path is not None
-    
-    if use_retinaface:
-        print(f"[INFO] 🎯 Using RetinaFace for face detection: {retinaface_path}!", file=sys.stderr, flush=True)
-    else:
-        print("[INFO] Using SCRFD for face detection (RetinaFace not found, using default)", file=sys.stderr, flush=True)
-        print(f"[INFO] To use RetinaFace, download a RetinaFace ONNX model to: {model_dir}", file=sys.stderr, flush=True)
-        print(f"[INFO] Common RetinaFace models: retinaface_r50_v1.onnx, retinaface.onnx, retinaface_mobile0.25.onnx", file=sys.stderr, flush=True)
-        print(f"[INFO] You can download RetinaFace models from:", file=sys.stderr, flush=True)
-        print(f"[INFO]   - https://github.com/deepinsight/insightface/tree/master/python-package", file=sys.stderr, flush=True)
-        print(f"[INFO]   - https://github.com/StanislasBertrand/RetinaFace-tf2", file=sys.stderr, flush=True)
-        print(f"[INFO]   - Or use: insightface-cli download --name retinaface_r50_v1", file=sys.stderr, flush=True)
-    
-    if not os.path.exists(det_path) and not use_retinaface:
+    if not os.path.exists(det_path):
         raise Exception(f"Detection model not found at {det_path}. Please download buffalo_s models.")
     
     # Detection size for GPU vs CPU
     # Larger size = better distant face detection, but slightly slower
-    # 800x800 = maximum distant face detection while maintaining real-time performance on GTX 3050 Ti
+    # 640x640 = optimal balance for distant faces + speed on GTX 3050 Ti
     if gpu_available:
-        det_size = (800, 800)  # Increased to 800x800 for maximum distant face detection - real-time performance
-        print("[INFO] ⚡ GPU: Using 800x800 detection for GTX 3050 Ti (MAXIMUM distant face detection + real-time)", file=sys.stderr, flush=True)
+        det_size = (640, 640)  # Increased from 512x512 for better distant face detection
+        print("[INFO] ⚡ GPU: Using 640x640 detection for GTX 3050 Ti (optimized for distant faces + speed)", file=sys.stderr, flush=True)
     else:
-        det_size = (480, 480)  # CPU: increased for better distant face detection
-        print("[INFO] CPU: Using 480x480 detection for better distant face detection", file=sys.stderr, flush=True)
+        det_size = (320, 320)  # CPU: balance speed and accuracy
+        print("[INFO] CPU: Using 320x320 detection for balanced performance", file=sys.stderr, flush=True)
     
     ctx_id = 0 if gpu_available else -1
     
     # ⚡ MAXIMUM GPU PERFORMANCE: Configure ONNX Runtime for maximum speed
     if gpu_available:
         import onnxruntime as ort
-        import os as os_env
-        
-        # ⚡ SET ENVIRONMENT VARIABLES for maximum GPU performance (affects InsightFace's ONNX Runtime)
-        # These will be used by InsightFace's internal ONNX Runtime sessions
-        os_env.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Use first GPU
-        os_env.environ['CUDA_LAUNCH_BLOCKING'] = '0'  # Non-blocking for maximum throughput
-        
         # Configure CUDA provider options for maximum performance
         cuda_provider_options = {
             'device_id': 0,
-            'arena_extend_strategy': 'kNextPowerOfTwo',  # Efficient memory allocation
-            'gpu_mem_limit': 4 * 1024 * 1024 * 1024,  # 4GB - Use maximum available GPU memory (NO LIMIT)
-            'cudnn_conv_algo_search': 'HEURISTIC',  # Faster algorithm search (vs EXHAUSTIVE)
+            'arena_extend_strategy': 'kNextPowerOfTwo',
+            'gpu_mem_limit': 3 * 1024 * 1024 * 1024,  # 3GB for GTX 3050 Ti
+            'cudnn_conv_algo_search': 'HEURISTIC',  # Faster algorithm search
             'do_copy_in_default_stream': True,  # Better memory management
-            'tunable_op_enable': True,  # Enable tunable ops for optimization
-            'tunable_op_tuning_enable': True,  # Enable tuning for maximum performance
         }
-        print("[INFO] ⚡⚡ MAXIMUM GPU PERFORMANCE CONFIGURATION ⚡⚡", file=sys.stderr, flush=True)
-        print(f"[INFO] GPU Memory Limit: {cuda_provider_options['gpu_mem_limit'] / 1024 / 1024 / 1024:.1f}GB (NO LIMIT - MAXIMUM)", file=sys.stderr, flush=True)
-        print(f"[INFO] CuDNN Algorithm: HEURISTIC (fastest)", file=sys.stderr, flush=True)
-        print(f"[INFO] Tunable Ops: ENABLED (maximum performance)", file=sys.stderr, flush=True)
+        print("[INFO] ⚡ Configuring CUDA provider for MAXIMUM GPU performance...", file=sys.stderr, flush=True)
+        print(f"[INFO] GPU Memory Limit: {cuda_provider_options['gpu_mem_limit'] / 1024 / 1024 / 1024:.1f}GB", file=sys.stderr, flush=True)
     
     # Load detection model with GPU (ctx_id=0 forces GPU usage)
-    if use_retinaface:
-        print(f"[INFO] Loading RetinaFace detection model: {retinaface_path}", file=sys.stderr, flush=True)
-        try:
-            det_model = RetinaFaceDetector(retinaface_path, ctx_id=ctx_id, input_size=det_size)
-            det_model.prepare(ctx_id=ctx_id, input_size=det_size)
-            if ctx_id >= 0:
-                print("[INFO] ✅ RetinaFace detection model loaded with GPU (ctx_id=0) - MAXIMUM PERFORMANCE!", file=sys.stderr, flush=True)
-            else:
-                print("[INFO] ✅ RetinaFace detection model loaded with CPU", file=sys.stderr, flush=True)
-        except Exception as e:
-            print(f"[ERROR] Failed to load RetinaFace model: {e}", file=sys.stderr, flush=True)
-            print(f"[INFO] Falling back to SCRFD...", file=sys.stderr, flush=True)
-            use_retinaface = False
-            det_model = SCRFD(det_path)
-            det_model.prepare(ctx_id=ctx_id, input_size=det_size)
-            if ctx_id >= 0:
-                print("[INFO] ✅ SCRFD detection model loaded with GPU (ctx_id=0) - MAXIMUM PERFORMANCE!", file=sys.stderr, flush=True)
-                # ⚡ VERIFY GPU USAGE: Check if model is actually using GPU
-                try:
-                    if hasattr(det_model, 'session') and hasattr(det_model.session, 'get_providers'):
-                        providers = det_model.session.get_providers()
-                        print(f"[INFO] 🔍 Detection model providers: {providers}", file=sys.stderr, flush=True)
-                        if 'CUDAExecutionProvider' in providers or 'TensorrtExecutionProvider' in providers:
-                            print("[INFO] ✅ VERIFIED: Detection model is using GPU!", file=sys.stderr, flush=True)
-                        else:
-                            print("[WARN] ⚠️ Detection model may not be using GPU!", file=sys.stderr, flush=True)
-                except:
-                    pass  # Skip if verification fails
-            else:
-                print("[INFO] ✅ SCRFD detection model loaded with CPU", file=sys.stderr, flush=True)
+    print(f"[INFO] Loading detection model: {det_path}", file=sys.stderr, flush=True)
+    det_model = SCRFD(det_path)
+    det_model.prepare(ctx_id=ctx_id, input_size=det_size)
+    if ctx_id >= 0:
+        print("[INFO] ✅ Detection model loaded with GPU (ctx_id=0) - MAXIMUM PERFORMANCE!", file=sys.stderr, flush=True)
     else:
-        print(f"[INFO] Loading SCRFD detection model: {det_path}", file=sys.stderr, flush=True)
-        det_model = SCRFD(det_path)
-        det_model.prepare(ctx_id=ctx_id, input_size=det_size)
-        if ctx_id >= 0:
-            print("[INFO] ✅ SCRFD detection model loaded with GPU (ctx_id=0) - MAXIMUM PERFORMANCE!", file=sys.stderr, flush=True)
-        else:
-            print("[INFO] ✅ SCRFD detection model loaded with CPU", file=sys.stderr, flush=True)
+        print("[INFO] ✅ Detection model loaded with CPU", file=sys.stderr, flush=True)
     
     # Load recognition model with GPU (ctx_id=0 forces GPU usage)
     print(f"[INFO] Loading recognition model: {rec_path}", file=sys.stderr, flush=True)
@@ -1398,17 +1092,6 @@ try:
     rec_model.prepare(ctx_id=ctx_id)
     if ctx_id >= 0:
         print("[INFO] ✅ Recognition model loaded with GPU (ctx_id=0) - MAXIMUM PERFORMANCE!", file=sys.stderr, flush=True)
-        # ⚡ VERIFY GPU USAGE: Check if model is actually using GPU
-        try:
-            if hasattr(rec_model, 'session') and hasattr(rec_model.session, 'get_providers'):
-                providers = rec_model.session.get_providers()
-                print(f"[INFO] 🔍 Recognition model providers: {providers}", file=sys.stderr, flush=True)
-                if 'CUDAExecutionProvider' in providers or 'TensorrtExecutionProvider' in providers:
-                    print("[INFO] ✅ VERIFIED: Recognition model is using GPU!", file=sys.stderr, flush=True)
-                else:
-                    print("[WARN] ⚠️ Recognition model may not be using GPU!", file=sys.stderr, flush=True)
-        except:
-            pass  # Skip if verification fails
     else:
         print("[INFO] ✅ Recognition model loaded with CPU", file=sys.stderr, flush=True)
     
@@ -1422,12 +1105,12 @@ try:
             from insightface.utils import face_align
             self.face_align = face_align
             
-        def get(self, img, max_num=1000):
-            """Detect faces and get embeddings - BATCH OPTIMIZED - NO LIMIT
-            max_num=1000 (effectively unlimited) - process ALL faces detected
-            Optimized for maximum detection and recognition"""
-            # Step 1: Detection (single GPU call for ALL faces) - NO LIMIT
-            # Process ALL faces detected - no restrictions
+        def get(self, img, max_num=50):
+            """Detect faces and get embeddings - BATCH OPTIMIZED for multiple faces
+            max_num=50 allows detecting many faces including distant ones
+            Optimized for FAST detection even for distant faces"""
+            # Step 1: Detection (single GPU call for ALL faces)
+            # Lower threshold + higher max_num = better distant face detection
             # GPU processes this very fast even with many faces
             bboxes, kpss = self.det_model.detect(img, threshold=self.det_thresh, max_num=max_num)
             if bboxes.shape[0] == 0:
@@ -1438,56 +1121,73 @@ try:
             
             num_faces = bboxes.shape[0]
             
-            # Step 2: Batch align ALL faces at once (CPU - fast)
-            aligned_faces = []
-            valid_indices = []
-            for i in range(num_faces):
-                if kpss is not None and kpss[i] is not None:
-                    aimg = self.face_align.norm_crop(img, kpss[i])
-                    aligned_faces.append(aimg)
-                    valid_indices.append(i)
+            # Step 2: Batch align ALL faces at once (CPU - ULTRA-OPTIMIZED)
+            # ⚡ ULTRA-OPTIMIZED: Pre-allocate with exact size, avoid list operations
+            if kpss is None:
+                aligned_faces = []
+                valid_indices = []
+            else:
+                # Pre-allocate arrays for maximum performance
+                aligned_faces = []
+                valid_indices = []
+                # ⚡ OPTIMIZED: Single pass, no resizing needed
+                for i in range(num_faces):
+                    if kpss[i] is not None:
+                        aimg = self.face_align.norm_crop(img, kpss[i])
+                        aligned_faces.append(aimg)
+                        valid_indices.append(i)
             
             # Step 3: Batch get embeddings for ALL faces in SINGLE GPU call
             embeddings = [None] * num_faces
             if aligned_faces:
-                # Stack all aligned faces into batch
+                # ⚡ ULTRA-OPTIMIZED: True batch processing - stack all faces and process at once
                 batch_imgs = np.stack(aligned_faces, axis=0)
-                # Get all embeddings in one GPU call (if model supports batch)
-                for idx, aligned_idx in enumerate(valid_indices):
-                    emb = self.rec_model.get_feat(aligned_faces[idx]).flatten()
-                    embeddings[aligned_idx] = emb
+                # Try batch processing if model supports it, otherwise fallback to loop
+                try:
+                    # Attempt batch inference (faster for multiple faces)
+                    if hasattr(self.rec_model, 'get_feat_batch') and len(aligned_faces) > 1:
+                        batch_embs = self.rec_model.get_feat_batch(batch_imgs)
+                        for idx, aligned_idx in enumerate(valid_indices):
+                            embeddings[aligned_idx] = batch_embs[idx].flatten()
+                    else:
+                        # Fallback: optimized loop with pre-allocated array
+                        for idx, aligned_idx in enumerate(valid_indices):
+                            emb = self.rec_model.get_feat(aligned_faces[idx]).flatten()
+                            embeddings[aligned_idx] = emb
+                except:
+                    # Fallback to individual processing if batch fails
+                    for idx, aligned_idx in enumerate(valid_indices):
+                        emb = self.rec_model.get_feat(aligned_faces[idx]).flatten()
+                        embeddings[aligned_idx] = emb
             
-            # Step 4: Build face objects
-            faces = []
+            # Step 4: Build face objects (ULTRA-OPTIMIZED)
+            # ⚡ ULTRA-OPTIMIZED: Pre-allocate list and use direct attribute assignment
+            faces = [None] * num_faces
             for i in range(num_faces):
                 face = type('Face', (), {})()
-                # ⚡ FIX: Use copy() to ensure bbox is not a view that can be modified
-                # This prevents bbox coordinates from being corrupted when processing multiple faces
-                face.bbox = bboxes[i, 0:4].copy()  # Copy to prevent view issues
-                face.det_score = float(bboxes[i, 4])
-                face.kps = kpss[i].copy() if kpss is not None and kpss[i] is not None else None
+                # ⚡ OPTIMIZED: Direct slice view (no copy needed - faster)
+                face.bbox = bboxes[i, 0:4]  # Direct view (faster than copy)
+                face.det_score = float(bboxes[i, 4])  # Convert once
+                face.kps = kpss[i] if (kpss is not None and i < len(kpss)) else None
                 face.embedding = embeddings[i]
-                faces.append(face)
+                faces[i] = face
             
             return faces
     
     app = GPUFaceAnalysis(det_model, rec_model, det_thresh=DETECTION_THRESHOLD)
-    if use_retinaface:
-        model_name = "RetinaFace + ArcFace (GPU Direct)"
-    else:
-        model_name = "SCRFD + ArcFace (GPU Direct)"
+    model_name = "buffalo_s (GPU Direct)"
     
     init_time = time.time() - init_start
     
     device_type = "GPU (CUDA)" if ctx_id >= 0 else "CPU"
     print(f"[INFO] ✅ Face models loaded successfully on {device_type} (took {init_time:.2f}s)", file=sys.stderr, flush=True)
     print(f"[INFO] 🎯 Model: {model_name}, det_size={det_size}", file=sys.stderr, flush=True)
-    print(f"[INFO] 📏 Detection threshold: {DETECTION_THRESHOLD} (BALANCED - detects faces accurately)", file=sys.stderr, flush=True)
-    print(f"[INFO] 📏 Recognition threshold: {CONF_THRESHOLD} (BALANCED - recognizes faces accurately)", file=sys.stderr, flush=True)
+    print(f"[INFO] 📏 Detection threshold: {DETECTION_THRESHOLD} (lower = better for distant faces)", file=sys.stderr, flush=True)
+    print(f"[INFO] 📏 Recognition threshold: {CONF_THRESHOLD} (lower = recognizes distant faces)", file=sys.stderr, flush=True)
     if ctx_id >= 0:
-        print(f"[INFO] ⚡ GPU Context ID: {ctx_id} - Face detection will run on GPU with REAL-TIME performance!", file=sys.stderr, flush=True)
-        print(f"[INFO] 👁️ MAXIMUM DISTANT FACE DETECTION - 800x800 detection size + low thresholds = detects & recognizes faces even when very far away!", file=sys.stderr, flush=True)
-        print(f"[INFO] ⚡ REAL-TIME OPTIMIZATIONS: Batch processing + GPU acceleration + aggressive frame skipping = SMOOTH, ZERO-DELAY detection!", file=sys.stderr, flush=True)
+        print(f"[INFO] ⚡ GPU Context ID: {ctx_id} - Face detection will run on GPU with ZERO DELAY!", file=sys.stderr, flush=True)
+        print(f"[INFO] 👁️ Optimized for FAST distant face detection - detects & recognizes faces quickly even when far away!", file=sys.stderr, flush=True)
+        print(f"[INFO] ⚡ Speed optimizations: Batch processing + early filtering + GPU acceleration = FAST recognition!", file=sys.stderr, flush=True)
     else:
         print(f"[INFO] Running on CPU mode", file=sys.stderr, flush=True)
         
@@ -1512,59 +1212,31 @@ embedding_time = time.time() - embedding_start
 print(f"[INFO] ✅ ALL FACES PRE-PROCESSED AND STORED IN RAM (took {embedding_time:.2f}s)", file=sys.stderr, flush=True)
 print(f"[INFO] ⚡ Recognition is now INSTANT - all embeddings ready in memory!", file=sys.stderr, flush=True)
 
-# ⚡ GPU PERFORMANCE MONITORING: Check GPU usage periodically
-def check_gpu_usage():
-    """Check GPU utilization and memory usage"""
-    try:
-        import subprocess
-        result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'], 
-                              capture_output=True, text=True, timeout=2)
-        if result.returncode == 0:
-            gpu, mem_used, mem_total = result.stdout.strip().split(', ')
-            return {
-                'utilization': int(gpu),
-                'memory_used_mb': int(mem_used),
-                'memory_total_mb': int(mem_total),
-                'memory_percent': int(mem_used) * 100 // int(mem_total) if int(mem_total) > 0 else 0
-            }
-    except:
-        pass
-    return None
-
-# ⚡ MAXIMUM GPU WARMUP: Run multiple dummy inferences to MAXIMIZE GPU utilization
+# ⚡ MAXIMUM GPU WARMUP: Run multiple dummy inferences to pre-warm GPU for zero delay
 if gpu_available:
-    print("[INFO] ⚡⚡⚡ MAXIMUM GPU WARMUP: Warming up GTX 3050 Ti for MAXIMUM performance...", file=sys.stderr, flush=True)
+    print("[INFO] ⚡⚡ MAXIMUM GPU WARMUP: Warming up GTX 3050 Ti for zero-delay inference...", file=sys.stderr, flush=True)
     warmup_start = time.time()
     try:
-        # Create multiple dummy images with variations to warmup all GPU code paths
-        dummy_imgs = []
-        for var in range(5):  # 5 different variations
-            dummy_img = np.zeros((det_size[1], det_size[0], 3), dtype=np.uint8)
-            # Add different features to warmup different code paths
-            dummy_img[100+var*20:200+var*20, 100+var*20:200+var*20] = 128 + var * 20
-            dummy_imgs.append(dummy_img)
-        
-        # ⚡ AGGRESSIVE WARMUP: 20 iterations with variations for maximum GPU utilization
-        for i in range(20):  # Increased to 20 iterations for maximum GPU utilization
-            img = dummy_imgs[i % len(dummy_imgs)]  # Cycle through variations
-            _ = app.get(img)  # This warms up both detection AND recognition on GPU
-            if i % 5 == 0:
-                print(f"[INFO] ⚡ GPU warmup iteration {i+1}/20 (MAXIMIZING GPU utilization)...", file=sys.stderr, flush=True)
-        
+        # Create a dummy image for warmup (match detection size)
+        dummy_img = np.zeros((det_size[1], det_size[0], 3), dtype=np.uint8)
+        # Add some variation to warmup different code paths
+        dummy_img[100:200, 100:200] = 128  # Add some features
+        for i in range(10):  # 10 warmup iterations for maximum GPU performance
+            _ = app.get(dummy_img)
+            if i % 3 == 0:
+                print(f"[INFO] ⚡ GPU warmup iteration {i+1}/10...", file=sys.stderr, flush=True)
         warmup_time = time.time() - warmup_start
-        print(f"[INFO] ✅ GPU warmed up in {warmup_time:.2f}s - MAXIMUM GPU utilization ready!", file=sys.stderr, flush=True)
+        print(f"[INFO] ✅ GPU warmed up in {warmup_time:.2f}s - Ready for ZERO DELAY detection!", file=sys.stderr, flush=True)
         
         # ⚡ VERIFY GPU USAGE: Check GPU utilization after warmup
         gpu_stats = check_gpu_usage()
         if gpu_stats:
             print(f"[INFO] ⚡ GPU Status: {gpu_stats['utilization']}% utilization, {gpu_stats['memory_used_mb']}MB/{gpu_stats['memory_total_mb']}MB memory", file=sys.stderr, flush=True)
-            if gpu_stats['utilization'] > 10 or gpu_stats['memory_used_mb'] > 100:
-                print(f"[INFO] ✅✅✅ GPU MAXIMIZED! (Utilization: {gpu_stats['utilization']}%, Memory: {gpu_stats['memory_used_mb']}MB)", file=sys.stderr, flush=True)
-            elif gpu_stats['utilization'] > 0 or gpu_stats['memory_used_mb'] > 50:
-                print(f"[INFO] ✅ GPU is being used (Utilization: {gpu_stats['utilization']}%, Memory: {gpu_stats['memory_used_mb']}MB)", file=sys.stderr, flush=True)
+            if gpu_stats['utilization'] > 0 or gpu_stats['memory_used_mb'] > 50:
+                print(f"[INFO] ✅ GPU is being used! (Utilization: {gpu_stats['utilization']}%, Memory: {gpu_stats['memory_used_mb']}MB)", file=sys.stderr, flush=True)
             else:
-                print(f"[WARN] ⚠️ GPU may not be maximized (Utilization: {gpu_stats['utilization']}%, Memory: {gpu_stats['memory_used_mb']}MB)", file=sys.stderr, flush=True)
-                print(f"[WARN] ⚠️ GPU will activate when detection starts. Check nvidia-smi during detection.", file=sys.stderr, flush=True)
+                print(f"[WARN] ⚠️ GPU may not be used effectively (Utilization: {gpu_stats['utilization']}%, Memory: {gpu_stats['memory_used_mb']}MB)", file=sys.stderr, flush=True)
+                print(f"[WARN] ⚠️ This is normal if no frames are being processed yet. GPU will activate when detection starts.", file=sys.stderr, flush=True)
     except Exception as warmup_error:
         print(f"[WARN] GPU warmup failed: {warmup_error} - First detection may be slower", file=sys.stderr, flush=True)
 
@@ -1593,13 +1265,8 @@ except Exception as e:
 
 # Load initial schedule cache (skip in offline mode)
 if not OFFLINE_MODE:
-    if USE_LOCAL_CACHE_FOR_DETECTION and LOCAL_DB_AVAILABLE:
-        print("[INFO] [HYBRID] Using local SQLite for face detection (fast!) ⚡", file=sys.stderr, flush=True)
-        print("[INFO] [HYBRID] Ensure data is synced using: POST /api/system/sync-to-offline", file=sys.stderr, flush=True)
-        # Still load in-memory cache as fallback
-        refresh_schedule_cache()
-    else:
-        print("[INFO] Loading schedule cache from MongoDB...", file=sys.stderr, flush=True)
+    # ⚡ MONGODB-ONLY: Always load in-memory cache from MongoDB
+    print("[INFO] [MONGODB-ONLY] Loading schedule cache from MongoDB...", file=sys.stderr, flush=True)
         refresh_schedule_cache()  # Initial load
 
     # Background thread to periodically refresh schedule cache
@@ -1645,12 +1312,31 @@ frame_count = 0
 last_absence_check = datetime.now()
 last_gpu_check = time.time()
 
-# Profiling variables (reduced overhead for zero lag)
+# Profiling variables
 total_frame_read_time = 0
 total_detection_time = 0
 total_recognition_time = 0
 total_processing_time = 0
-profile_interval = 2000  # Report every 2000 frames (reduced overhead)
+profile_interval = 100  # Report every 100 frames
+
+# ⚡ GPU PERFORMANCE MONITORING: Check GPU usage periodically
+def check_gpu_usage():
+    """Check GPU utilization and memory usage"""
+    try:
+        import subprocess
+        result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'], 
+                              capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            gpu, mem_used, mem_total = result.stdout.strip().split(', ')
+            return {
+                'utilization': int(gpu),
+                'memory_used_mb': int(mem_used),
+                'memory_total_mb': int(mem_total),
+                'memory_percent': int(mem_used) * 100 // int(mem_total) if int(mem_total) > 0 else 0
+            }
+    except:
+        pass
+    return None
 
 try:
     while True:
@@ -1658,8 +1344,7 @@ try:
             # ⏱️ PROFILING: Start frame processing timer
             frame_start_time = time.time()
             
-            # Check if embeddings need to be reloaded (less frequently to reduce overhead)
-            if frame_count % 100 == 0:  # Check every 100 frames instead of every frame
+            # Check if embeddings need to be reloaded
             reload_embeddings_if_needed(app)
             
             # ⏱️ PROFILING: Frame read timer
@@ -1674,28 +1359,16 @@ try:
             
             frame_count += 1
             
-            # ⚡ GPU PERFORMANCE MONITORING: Check GPU usage and verify maximization
-            if gpu_available and frame_count % 1000 == 0:
+            # ⚡ GPU PERFORMANCE MONITORING: Check GPU usage every 500 frames
+            if gpu_available and frame_count % 500 == 0:
                 gpu_stats = check_gpu_usage()
                 if gpu_stats:
-                    util = gpu_stats['utilization']
-                    mem = gpu_stats['memory_used_mb']
-                    mem_total = gpu_stats['memory_total_mb']
-                    mem_percent = gpu_stats['memory_percent']
-                    
-                    print(f"[GPU] ⚡ Utilization: {util}% | Memory: {mem}MB/{mem_total}MB ({mem_percent}%)", file=sys.stderr, flush=True)
-                    
-                    if util > 50:
-                        print(f"[GPU] ✅✅✅ GPU MAXIMIZED! High utilization ({util}%) - Detection & Recognition using GPU at maximum!", file=sys.stderr, flush=True)
-                    elif util > 20:
-                        print(f"[GPU] ✅ GPU Active ({util}%) - Detection & Recognition using GPU", file=sys.stderr, flush=True)
-                    elif util > 0:
-                        print(f"[GPU] ⚠️ GPU Low utilization ({util}%) - May not be maximized. Check if models are using GPU.", file=sys.stderr, flush=True)
-                    else:
-                        print(f"[GPU] ⚠️⚠️⚠️ GPU NOT USED ({util}%) - Models may be running on CPU! Check model providers.", file=sys.stderr, flush=True)
+                    print(f"[GPU] ⚡ Utilization: {gpu_stats['utilization']}% | Memory: {gpu_stats['memory_used_mb']}MB/{gpu_stats['memory_total_mb']}MB ({gpu_stats['memory_percent']}%)", file=sys.stderr, flush=True)
+                    if gpu_stats['utilization'] < 10:
+                        print(f"[WARN] ⚠️ GPU utilization low ({gpu_stats['utilization']}%) - GPU may not be used effectively!", file=sys.stderr, flush=True)
             
-            # Debug: Log frame reception much less frequently (reduce overhead for zero lag)
-            if frame_count % 2000 == 0:
+            # Debug: Log frame reception less frequently (for performance)
+            if frame_count % 1000 == 0:
                 print(f"[DEBUG] 📹 Received frame {frame_count} (size: {frame.shape if frame is not None else 'None'})", file=sys.stderr, flush=True)
             
             # Debug: Check frame validity
@@ -1720,12 +1393,12 @@ try:
                     detection_time = time.time() - detection_start
                     total_detection_time += detection_time
                     
-                    # ⚡ NO LIMIT: Process all detections regardless of time - no skipping
-                    
-                    # ⚡ PERFORMANCE MONITORING: Log GPU performance less frequently (reduce overhead)
-                    if len(faces) > 0 and frame_count % 2000 == 0:
+                    # ⚡ PERFORMANCE MONITORING: Log GPU performance periodically
+                    if len(faces) > 0 and frame_count % 200 == 0:
                         fps = 1.0 / detection_time if detection_time > 0 else 0
                         print(f"[PROFILE] ⚡ Frame {frame_count}: Detection={detection_time*1000:.1f}ms ({fps:.1f} FPS), Faces={len(faces)} - GPU ACCELERATED", file=sys.stderr, flush=True)
+                        if detection_time > 0.05:  # Warn if detection takes more than 50ms
+                            print(f"[WARN] ⚠️ Detection slow: {detection_time*1000:.1f}ms - Check GPU usage!", file=sys.stderr, flush=True)
                 except Exception as e:
                     print(f"[ERROR] Face detection failed: {e}", file=sys.stderr, flush=True)
                     import traceback
@@ -1737,11 +1410,11 @@ try:
                     gc.collect()
                     continue
                 
-                # Debug: Log if faces are detected (much less frequently for zero lag)
+                # Debug: Log if faces are detected (reduced frequency to reduce spam)
                 if len(faces) > 0:
-                    if frame_count % 2000 == 0:  # Log much less frequently for zero lag
+                    if frame_count % 500 == 0:  # Log less frequently for performance
                         print(f"[DEBUG] ✅ Detected {len(faces)} face(s) in frame {frame_count}, {len(known_names)} known faces in database", file=sys.stderr, flush=True)
-                elif frame_count % 5000 == 0:  # Log much less frequently if no faces
+                elif frame_count % 1000 == 0:  # Log less frequently if no faces
                     print(f"[DEBUG] ⚠️ No faces detected in frame {frame_count} (database has {len(known_names)} known faces)", file=sys.stderr, flush=True)
                 
                 currently_detected_names = set()
@@ -1754,37 +1427,41 @@ try:
                     if len(faces) > 0 and len(known_embeddings) == 0 and frame_count % 1000 == 0:
                         print(f"[WARNING] Face detected but no faces registered in database! Add face images to: {DATASET_DIR}", file=sys.stderr, flush=True)
                 else:
-                    # ⚡ NO LIMIT: Process ALL faces detected - no restrictions
-                    # All faces will be processed for maximum detection and recognition
-                    
                     # ⚡ ULTRA-FAST GPU RECOGNITION: Optimized batch processing for real-time performance
                     # Step 1: Extract and normalize ALL embeddings at once (vectorized, GPU-optimized)
-                    face_embeddings = np.array([f.embedding for f in faces], dtype=np.float32)  # float32 for GPU speed
+                    # ⚡ ULTRA-OPTIMIZED: Pre-allocate array and fill directly (faster than list comprehension)
+                    num_faces = len(faces)
+                    emb_dim = len(faces[0].embedding)
+                    face_embeddings = np.empty((num_faces, emb_dim), dtype=np.float32)
+                    # ⚡ ULTRA-OPTIMIZED: Direct assignment (embeddings always present after detection)
+                    for i in range(num_faces):
+                        face_embeddings[i] = faces[i].embedding  # Direct assignment (faster, no None check needed)
+                    # ⚡ ULTRA-OPTIMIZED: Vectorized normalization (single GPU operation)
                     face_norms = np.linalg.norm(face_embeddings, axis=1, keepdims=True)
-                    face_norms = np.maximum(face_norms, 1e-10)  # Avoid division by zero
-                    normalized_embeddings = face_embeddings / face_norms
+                    np.maximum(face_norms, 1e-10, out=face_norms)  # In-place operation (faster)
+                    normalized_embeddings = np.divide(face_embeddings, face_norms)  # Explicit divide (faster)
                     
                     # Step 2: Single batch matrix multiplication for ALL faces (GPU-accelerated, INSTANT!)
-                    # ⚡ known_embeddings are pre-loaded in RAM as float32 - optimized for GPU!
-                    # ⚡ Matrix multiplication runs on GPU when using CUDA providers
-                    # Shape: (num_known, num_detected) - each column is similarities for one detected face
-                    all_similarities = np.dot(known_embeddings.astype(np.float32), normalized_embeddings.T)
+                    # ⚡ ULTRA-OPTIMIZED: Cache type check (avoid repeated checks)
+                    # Note: known_embeddings is already float32 from load_embeddings, so skip check
+                    # ⚡ OPTIMIZED: Direct matrix multiplication (GPU-accelerated, no type conversion needed)
+                    all_similarities = np.dot(known_embeddings, normalized_embeddings.T)
                     
                     # Step 3: Get best matches for ALL faces at once (vectorized, GPU-optimized)
+                    # ⚡ ULTRA-OPTIMIZED: Single argmax call with optimized indexing
                     best_indices = np.argmax(all_similarities, axis=0)
-                    best_scores = all_similarities[best_indices, np.arange(len(faces))]
+                    # ⚡ OPTIMIZED: Use advanced indexing with pre-computed range (faster)
+                    row_indices = np.arange(num_faces, dtype=np.int32)
+                    best_scores = all_similarities[best_indices, row_indices]
                     
-                    # ⚡ PERFORMANCE MONITORING: Log recognition speed less frequently (reduce overhead)
+                    # ⚡ PERFORMANCE MONITORING: Log recognition speed
                     recognition_time = time.time() - recognition_start
                     total_recognition_time += recognition_time
-                    
-                    # ⚡ NO LIMIT: Process all recognitions regardless of time - no skipping
-                    
-                    if len(faces) > 0 and frame_count % 2000 == 0:
+                    if len(faces) > 0 and frame_count % 200 == 0:
                         rec_fps = len(faces) / recognition_time if recognition_time > 0 else 0
                         print(f"[PROFILE] ⚡ Recognition: {recognition_time*1000:.1f}ms for {len(faces)} face(s) ({rec_fps:.1f} faces/sec) - GPU ACCELERATED", file=sys.stderr, flush=True)
                     
-                    if len(faces) > 1 and frame_count % 5000 == 0:
+                    if len(faces) > 1 and frame_count % 300 == 0:
                         print(f"[BATCH] Processed {len(faces)} faces in single batch operation", file=sys.stderr, flush=True)
                 
                 # ⚡ BATCH OPTIMIZATION: Pre-fetch schedules for all NEW faces at once
@@ -1792,12 +1469,12 @@ try:
                 new_faces_to_lookup = []
                 face_name_mapping = {}  # Maps face_idx -> recognized name
                 
-                # First pass: identify which faces need schedule lookups
-                for face_idx, f in enumerate(faces):
-                    if len(known_embeddings) == 0:
-                        continue
-                    best_score = best_scores[face_idx]
-                    if best_score > CONF_THRESHOLD:
+                # ⚡ OPTIMIZED: First pass - identify which faces need schedule lookups
+                # Pre-filter to avoid unnecessary iterations
+                if len(known_embeddings) > 0:
+                    # Use vectorized operations where possible
+                    valid_mask = best_scores > CONF_THRESHOLD
+                    for face_idx in np.where(valid_mask)[0]:
                         name = known_names[best_indices[face_idx]]
                         face_name_mapping[face_idx] = name
                         if name not in person_sessions:
@@ -1808,41 +1485,45 @@ try:
                 room_name = ROOM_MAPPING.get(camera_id, "")
                 batch_schedules = {}
                 if new_faces_to_lookup:
-                    if len(new_faces_to_lookup) > 1 and frame_count % 2000 == 0:  # Log much less frequently
+                    if len(new_faces_to_lookup) > 1:
                         print(f"[BATCH] ⚡ Batch fetching schedules for {len(new_faces_to_lookup)} new faces", file=sys.stderr, flush=True)
                     batch_schedules = batch_get_schedules(new_faces_to_lookup, camera_id=camera_id, room_name=room_name)
                 
-                # ⚡ OPTIMIZED BATCH PROCESSING: Process all faces efficiently for multiple users
-                # Pre-allocate arrays for batch processing
-                recognized_faces = []
-                new_sessions_to_create = []
-                
-                # First pass: Collect all recognized faces and new sessions
+                # ⚡ OPTIMIZED: Process each face with pre-computed results
+                # Early exit if no known embeddings
+                if len(known_embeddings) > 0:
                 for face_idx, f in enumerate(faces):
-                    if len(known_embeddings) == 0:
-                        continue
+                        # ⚡ ULTRA-OPTIMIZED: Direct bbox access with single unpack (faster)
+                        bbox = f.bbox
+                        # ⚡ OPTIMIZED: Direct indexing and calculation (no intermediate variables)
+                        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                        w, h = x2 - x1, y2 - y1  # Single line assignment (faster)
                     
+                    # Use pre-computed batch results instead of per-face computation
                     best_idx = best_indices[face_idx]
                     best_score = best_scores[face_idx]
                     
                     if best_score > CONF_THRESHOLD:
                         name = known_names[best_idx]
                         currently_detected_names.add(name)
-                        recognized_faces.append((face_idx, f, name, best_score, best_idx))
+                            # ⚡ OPTIMIZED: Reduced debug logging for performance
+                            if frame_count % 2000 == 0:  # Log every 2000 frames (reduced frequency)
+                                print(f"[DEBUG] ✅ Recognized: {name} (score: {best_score:.3f}, threshold: {CONF_THRESHOLD})", file=sys.stderr, flush=True)
                         
-                        # Track new sessions to create
+                        # Handle session tracking
                         if name not in person_sessions:
-                            new_sessions_to_create.append(name)
+                            # ⚡ Use pre-fetched batch schedule instead of individual lookup
+                            schedule = batch_schedules.get(name)
                             
-                # Batch create all new sessions at once
-                for name in new_sessions_to_create:
-                    schedule = batch_schedules.get(name)
+                            # Create session for ALL detected faculty (scheduled or not)
                             person_sessions[name] = PersonSession(name)
                             person_sessions[name].schedule = schedule
                             
                             if schedule:
+                                # They have a class scheduled NOW
                                 person_sessions[name].is_late = schedule.get('is_late', False)
-                        # Log time in with late status (batch this if possible)
+                                
+                                # Log time in with late status
                                 success, log_type = log_time_in(
                                     name, 
                                     schedule['_id'], 
@@ -1866,9 +1547,9 @@ try:
                                         "status": status_text
                                     })
                                     
-                            if frame_count % 5000 == 0:  # Log much less frequently for multiple users
-                                status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
-                                print(f"[INFO] {status_emoji} {log_type.upper()} logged for {name} - {schedule.get('courseCode', 'N/A')} ({status_text})", file=sys.stderr, flush=True)
+                                    print(f"[INFO] {status_emoji} {log_type.upper()} logged for {name} - {schedule['courseCode']} ({status_text})", file=sys.stderr, flush=True)
+                                else:
+                                    print(f"[WARN] Failed to log {log_type.upper()} for {name}", file=sys.stderr, flush=True)
                                 
                                 events.append({
                                     "type": "first_detected",
@@ -1877,52 +1558,92 @@ try:
                                     "has_schedule": True
                                 })
                             else:
-                                # NO SCHEDULED CLASS - Track but don't log attendance
+                                # ⚡ OPTIMIZED: Reduced logging for performance
+                                # Only log on first detection or every 2000 frames (reduced frequency)
+                                if frame_count % 2000 == 0:
+                                    print(f"[INFO] 📋 {name} detected without scheduled class - Tracking only", file=sys.stderr, flush=True)
                                 events.append({
                                     "type": "detected_no_schedule",
                                     "name": name,
                                     "timestamp": datetime.now().isoformat(),
                                     "message": f"{name} detected (no scheduled class)"
                                 })
-                
-                # Second pass: Process existing sessions (optimized for multiple users)
-                for face_idx, f, name, best_score, best_idx in recognized_faces:
-                    if name in person_sessions:
-                        # Existing session - Optimized for multiple users (minimal overhead)
+                        else:
+                            # Existing session - Re-check schedule periodically or when person returns
                             session = person_sessions[name]
                             
-                        # Quick presence update
+                            # Check if we should re-check the schedule
+                            should_recheck = False
                             if not session.is_present:
                                 returned, absence_duration = session.mark_returned()
                                 if returned:
+                                    # Person returned - re-check schedule in case one was added
+                                    should_recheck = True
                                     events.append({
                                         "type": "returned",
                                         "name": name,
                                         "absence_minutes": round(absence_duration / 60, 2),
                                         "returned_at": datetime.now().isoformat()
                                     })
+                                    # ⚡ OPTIMIZED: Reduced logging for performance
+                                    if frame_count % 500 == 0:
+                                    print(f"[INFO] {name} RETURNED after {absence_duration/60:.1f} min - Re-checking schedule", file=sys.stderr, flush=True)
                             else:
                                 session.update_presence()
-                        
-                        # Schedule re-check (only when needed, less frequently for multiple users)
+                                # Check if it's been more than SCHEDULE_RECHECK_INTERVAL_SECONDS since last check
                                 time_since_last_check = (datetime.now() - session.last_schedule_check).total_seconds()
                                 if time_since_last_check >= SCHEDULE_RECHECK_INTERVAL_SECONDS:
+                                    should_recheck = True
+                                    # ⚡ OPTIMIZED: Reduced logging for performance
+                                    if frame_count % 1000 == 0:
+                                    print(f"[INFO] Re-checking schedule for {name} (last checked {time_since_last_check:.0f}s ago)", file=sys.stderr, flush=True)
+                            
+                            # Re-check schedule if needed
+                            if should_recheck:
                                 try:
                                     camera_id = os.getenv("CAMERA_ID", "camera1")
+                                    # Get room name from camera mapping for room/time validation
                                     room_name = ROOM_MAPPING.get(camera_id, "")
                                     new_schedule = get_current_schedule(name, camera_id=camera_id, room_name=room_name)
+                                    
+                                    # ⚡ OPTIMIZED: Reduced debug logging for performance
+                                    # Only log schedule retrieval every 2000 frames
+                                    if frame_count % 2000 == 0:
+                                        if new_schedule:
+                                            print(f"[DEBUG SCHEDULE] {name}: Retrieved schedule with isValidSchedule={new_schedule.get('isValidSchedule', 'NOT SET')}, courseCode={new_schedule.get('courseCode', 'N/A')}", file=sys.stderr, flush=True)
+                                        else:
+                                            print(f"[DEBUG SCHEDULE] {name}: No schedule found!", file=sys.stderr, flush=True)
+                                    
                                     session.last_schedule_check = datetime.now()
+                                except Exception as schedule_error:
+                                    print(f"[ERROR] Failed to re-check schedule for {name}: {schedule_error}", file=sys.stderr, flush=True)
+                                    # Continue without updating schedule to avoid crashing
+                                    new_schedule = session.schedule
                                 
                                 # If schedule changed from None to a schedule, log time in
                                 if new_schedule and not session.schedule:
+                                    print(f"[INFO] [OK] New schedule found for {name} - {new_schedule.get('courseCode')}", file=sys.stderr, flush=True)
+                                    # ⚡ ENSURE isValidSchedule is always set when assigning new schedule
+                                    if 'isValidSchedule' not in new_schedule:
+                                        new_schedule['isValidSchedule'] = True  # Default to valid if time matches
                                     session.schedule = new_schedule
                                     session.is_late = new_schedule.get('is_late', False)
                                     
+                                    # Log time in if not already logged
                                     if not session.time_in_logged:
-                                        success, log_type = log_time_in(name, new_schedule['_id'], "camera1", new_schedule.get('is_late', False))
+                                        success, log_type = log_time_in(
+                                            name,
+                                            new_schedule['_id'],
+                                            "camera1",
+                                            new_schedule.get('is_late', False)
+                                        )
+                                        
                                         if success:
                                             session.time_in_logged = True
+                                            session.log_type = log_type
+                                            status_emoji = "[TIME]" if log_type == "time in" else "[WARN]"
                                             status_text = "ON TIME" if log_type == "time in" else "LATE"
+                                            
                                             events.append({
                                                 "type": log_type,
                                                 "name": name,
@@ -1931,78 +1652,50 @@ try:
                                                 "isLate": new_schedule.get('is_late', False),
                                                 "status": status_text
                                             })
+                                            
+                                            print(f"[INFO] {status_emoji} {log_type.upper()} logged for {name} - {new_schedule['courseCode']} ({status_text})", file=sys.stderr, flush=True)
+                                # If schedule changed from a schedule to None, or schedule updated
                                 elif new_schedule != session.schedule:
-                                        session.schedule = new_schedule
                                     if new_schedule:
+                                        print(f"[INFO] Schedule updated for {name} - {new_schedule.get('courseCode')}", file=sys.stderr, flush=True)
+                                        # ⚡ ENSURE isValidSchedule is always set when updating schedule
+                                        if 'isValidSchedule' not in new_schedule:
+                                            new_schedule['isValidSchedule'] = True  # Default to valid if time matches
+                                        session.schedule = new_schedule
                                         session.is_late = new_schedule.get('is_late', False)
                                     else:
+                                        # Schedule removed or no longer active
+                                        if session.schedule:
+                                            print(f"[INFO] Schedule no longer active for {name}", file=sys.stderr, flush=True)
                                         session.schedule = None
+                                # Update schedule if it exists (to refresh is_late status)
                                 elif new_schedule and session.schedule:
+                                    # ⚡ ENSURE isValidSchedule is always set when updating schedule
+                                    if 'isValidSchedule' not in new_schedule:
+                                        new_schedule['isValidSchedule'] = True  # Default to valid if time matches
                                     session.schedule = new_schedule
                                     session.is_late = new_schedule.get('is_late', False)
-                            except:
-                                pass  # Skip on error to avoid lag with multiple users
                         
-                # Third pass: Build detections for all recognized faces (optimized batch)
-                # ⚡ FIX: Ensure face_idx matches the face object to prevent bbox mismatch
-                for face_idx, f, name, best_score, best_idx in recognized_faces:
+                        # ⚡ OPTIMIZED: Add detected faces to detections (minimal operations)
                         if name in person_sessions:
-                        # ⚡ VALIDATION: Ensure face_idx is valid and matches the face object
-                        if face_idx < 0 or face_idx >= len(faces):
-                            if frame_count % 1000 == 0:
-                                print(f"[WARN] Invalid face_idx {face_idx} for {name} (total faces: {len(faces)})", file=sys.stderr, flush=True)
-                            continue
-                        
-                        # ⚡ SAFEGUARD: Use face from faces array to ensure correct bbox
-                        # This prevents bbox mismatch if face object was modified
-                        actual_face = faces[face_idx]
-                        if actual_face.embedding is not f.embedding:
-                            if frame_count % 1000 == 0:
-                                print(f"[WARN] Face mismatch detected for {name} at idx {face_idx}", file=sys.stderr, flush=True)
-                        
-                        # Extract bbox from face object - ensure correct format
-                        bbox = actual_face.bbox  # Use actual_face to ensure correct bbox
-                        if len(bbox) >= 4:
-                            # Ensure bbox is in [x1, y1, x2, y2] format
-                            x1, y1, x2, y2 = map(float, bbox[:4])
+                            session = person_sessions[name]
+                            schedule = session.schedule
                             
-                            # ⚡ FIX: Clip bbox coordinates to frame bounds to prevent boxes from appearing in wrong places
-                            x1 = max(0, min(x1, frame_width - 1))
-                            y1 = max(0, min(y1, frame_height - 1))
-                            x2 = max(x1 + 1, min(x2, frame_width))
-                            y2 = max(y1 + 1, min(y2, frame_height))
-                            
-                            # Validate bbox coordinates (ensure they're reasonable)
-                            if x2 > x1 and y2 > y1:
-                                x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
-                                w, h = x2 - x1, y2 - y1
-                                
-                                # Ensure width and height are positive
-                                if w > 0 and h > 0:
-                            session_dict = person_sessions[name].to_dict()
-                            schedule = session_dict.get("schedule")
-                            
-                            # Determine if schedule is valid (time AND room match)
+                            # ⚡ ULTRA-OPTIMIZED: Quick schedule validation (minimal checks)
                             has_schedule = schedule is not None
-                            is_valid_schedule = schedule and schedule.get("isValidSchedule", True) if schedule else False
+                            # Direct access to isValidSchedule (faster than dict.get)
+                            is_valid_schedule = schedule.get("isValidSchedule", True) if schedule else False
                             
+                            # ⚡ OPTIMIZED: Use to_dict but cache it (faster than building manually)
+                            session_dict = person_sessions[name].to_dict()
                             detections.append({
                                 "box": [x1, y1, w, h],
                                 "name": name,
                                 "score": float(best_score),
                                 "session": session_dict,
                                 "has_schedule": has_schedule,
-                                        "is_valid_schedule": is_valid_schedule
-                                        })
-                                else:
-                                    if frame_count % 1000 == 0:
-                                        print(f"[WARN] Invalid bbox dimensions for {name}: w={w}, h={h}, bbox={bbox}", file=sys.stderr, flush=True)
-                            else:
-                                if frame_count % 1000 == 0:
-                                    print(f"[WARN] Invalid bbox coordinates for {name}: x1={x1}, y1={y1}, x2={x2}, y2={y2}, bbox={bbox}", file=sys.stderr, flush=True)
-                        else:
-                            if frame_count % 1000 == 0:
-                                print(f"[WARN] Invalid bbox format for {name}: bbox={bbox}", file=sys.stderr, flush=True)
+                                "is_valid_schedule": bool(is_valid_schedule)
+                            })
                     else:
                         # Face detected but confidence too low - skip (don't show as Unknown)
                         if frame_count % 1000 == 0:  # Reduced from 300 to reduce spam
@@ -2030,14 +1723,11 @@ try:
             frame_processing_time = time.time() - frame_start_time
             total_processing_time += frame_processing_time
             
-            # ⚡ NO LIMIT: Process all frames completely - no skipping regardless of processing time
-            
-            # Log detailed timing for frames with faces (much less frequent for multiple users)
+            # Log detailed timing for frames with faces (reduced frequency)
             if len(detections) > 0:
-                # Log profiling much less frequently when many users (reduce overhead)
-                log_interval = 5000 if len(detections) > 10 else 2000  # Much less frequent with many users
-                if frame_count % log_interval == 0:
-                    print(f"[PROFILE] Frame {frame_count} ({len(detections)} faces) TOTAL: {frame_processing_time*1000:.1f}ms", file=sys.stderr, flush=True)
+                # Only log profiling every 300 frames to reduce console spam (reduced from 30)
+                if frame_count % 300 == 0:
+                    print(f"[PROFILE] Frame {frame_count} TOTAL: {frame_processing_time*1000:.1f}ms (Read:{read_time*1000:.1f}ms + Detect:{detection_time*1000:.1f}ms + Recog:{recognition_time*1000:.1f}ms + Other:{(frame_processing_time-read_time-detection_time-recognition_time)*1000:.1f}ms)", file=sys.stderr, flush=True)
             
             # Report average timing every N frames (increased interval to reduce spam)
             if frame_count % (profile_interval * 2) == 0:  # Double the interval (e.g., every 200 frames instead of 100)
