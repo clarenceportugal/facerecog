@@ -735,19 +735,32 @@ const handleSaveEdit = async () => {
   return (
     <AdminMain>
       <Box sx={{ p: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1.5 }}>
           <Layers sx={{ fontSize: 36 }} />
           <Typography variant="h4" component="h1">
             Section & Subject Management
           </Typography>
         </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          Manage sections/blocks on the left and subjects on the right. Search, add, and edit quickly with the streamlined layout.
+        </Typography>
 
         <Grid container spacing={3}>
           {/* Left: Sections */}
           <Grid item xs={12} md={6}>
-            <Card sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            <Card
+              sx={{
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+                border: "1px solid",
+                borderColor: "divider",
+                boxShadow: "0px 6px 18px rgba(0,0,0,0.06)",
+                borderRadius: 2,
+              }}
+            >
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant="h6" gutterBottom fontWeight={600}>
                   Sections
                 </Typography>
 
@@ -761,6 +774,9 @@ const handleSaveEdit = async () => {
                     onChange={(e) => setSectionsSearch(e.target.value)}
                     InputProps={{ "aria-label": "search-sections" }}
                   />
+                  <Typography variant="caption" color="text.secondary">
+                    Tip: Type any keyword (course / section / block) to filter instantly.
+                  </Typography>
                 </Box>
 
                 {/* Row: readonly course (from localStorage) | section input | block input | add button */}
@@ -811,13 +827,25 @@ const handleSaveEdit = async () => {
                   </Grid>
                 </Grid>
 
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 420 }}>
+                <TableContainer
+                  component={Paper}
+                  variant="outlined"
+                  sx={{
+                    maxHeight: 440,
+                    borderRadius: 2,
+                    overflow: "hidden",
+                    borderColor: "divider",
+                    boxShadow: "none",
+                  }}
+                >
                   <Table stickyHeader size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Section</TableCell>
-                        <TableCell>Block</TableCell>
-                        <TableCell align="right">Actions</TableCell>
+                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Section</TableCell>
+                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Block</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>
+                          Actions
+                        </TableCell>
                       </TableRow>
                     </TableHead>
 
@@ -865,9 +893,19 @@ const handleSaveEdit = async () => {
 
           {/* Right: Subjects */}
           <Grid item xs={12} md={6}>
-            <Card sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            <Card
+              sx={{
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+                border: "1px solid",
+                borderColor: "divider",
+                boxShadow: "0px 6px 18px rgba(0,0,0,0.06)",
+                borderRadius: 2,
+              }}
+            >
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant="h6" gutterBottom fontWeight={600}>
                   Subjects
                 </Typography>
 
@@ -914,13 +952,25 @@ const handleSaveEdit = async () => {
                   </Grid>
                 </Grid>
 
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 420 }}>
+                <TableContainer
+                  component={Paper}
+                  variant="outlined"
+                  sx={{
+                    maxHeight: 440,
+                    borderRadius: 2,
+                    overflow: "hidden",
+                    borderColor: "divider",
+                    boxShadow: "none",
+                  }}
+                >
                   <Table stickyHeader size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Code</TableCell>
-                        <TableCell>Subject</TableCell>
-                        <TableCell align="right">Actions</TableCell>
+                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Code</TableCell>
+                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Subject</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>
+                          Actions
+                        </TableCell>
                       </TableRow>
                     </TableHead>
 

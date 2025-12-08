@@ -73,54 +73,6 @@
         }
       }
     ],
-    "Portugal, Clarence": [
-      {
-        "_id": "6935a2fa0bc797e00be877d3",
-        "courseTitle": "Web Systems and Technologies",
-        "courseCode": "IT 214",
-        "room": "Lab 1",
-        "startTime": "00:01",
-        "endTime": "12:01",
-        "days": {
-          "mon": true,
-          "tue": true,
-          "wed": true,
-          "thu": true,
-          "fri": true,
-          "sat": true,
-          "sun": false
-        },
-        "semesterStartDate": "2025-08-01",
-        "semesterEndDate": "2025-12-15",
-        "instructor": {
-          "first_name": "Clarence",
-          "last_name": "Portugal"
-        }
-      },
-      {
-        "_id": "6935a607174779052696e791",
-        "courseTitle": "Programming Fundamentals",
-        "courseCode": "IT 112",
-        "room": "Lab 1",
-        "startTime": "00:05",
-        "endTime": "05:00",
-        "days": {
-          "mon": true,
-          "tue": true,
-          "wed": true,
-          "thu": true,
-          "fri": true,
-          "sat": true,
-          "sun": false
-        },
-        "semesterStartDate": "2025-08-01",
-        "semesterEndDate": "2025-12-15",
-        "instructor": {
-          "first_name": "Clarence",
-          "last_name": "Portugal"
-        }
-      }
-    ],
     "Portugal, Richard": [
       {
         "_id": "693633cfb6b3e6aec8bdb0bf",
@@ -145,7 +97,32 @@
           "last_name": "Portugal"
         }
       }
+    ],
+    "Portugal, Clarence": [
+      {
+        "_id": "69367d1f3344147f04b95aca",
+        "courseTitle": "Web Systems and Technologies",
+        "courseCode": "IT 214",
+        "room": "Lab 1",
+        "startTime": "15:20",
+        "endTime": "17:20",
+        "days": {
+          "mon": true,
+          "tue": true,
+          "wed": true,
+          "thu": true,
+          "fri": false,
+          "sat": false,
+          "sun": false
+        },
+        "semesterStartDate": "2025-08-01",
+        "semesterEndDate": "2025-12-15",
+        "instructor": {
+          "first_name": "Clarence",
+          "last_name": "Portugal"
+        }
+      }
     ]
   },
-  "last_refresh": "2025-12-08T14:57:43.240277"
+  "last_refresh": "2025-12-08T16:20:44.391891"
 }

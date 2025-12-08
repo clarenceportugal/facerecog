@@ -99,9 +99,20 @@ const DeanLiveVideo: React.FC = () => {
       }));
     };
 
+    // ⚡ FRAME THROTTLING: Prevent frame queue buildup that causes stuttering
+    let lastFrameTime = 0;
+    const MIN_FRAME_INTERVAL = 16; // ~60 FPS max (16ms = 60fps)
+    
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
         try {
+          const now = performance.now();
+          // Skip frames that arrive too quickly to prevent stuttering
+          if (now - lastFrameTime < MIN_FRAME_INTERVAL) {
+            return; // Drop frame to prevent queue buildup
+          }
+          lastFrameTime = now;
+          
           const buffer = new Uint8Array(event.data);
           const metadataLen = new DataView(buffer.buffer).getUint32(0, false);
           const metadataBytes = buffer.slice(4, 4 + metadataLen);
@@ -119,8 +130,12 @@ const DeanLiveVideo: React.FC = () => {
               const oldSrc = imgRef.current.src;
               // ⚡ MEMORY OPTIMIZATION: Revoke old URL immediately to free memory
               if (oldSrc && oldSrc.startsWith('blob:')) {
-                // Use setTimeout to ensure old URL is revoked after new one is set
-                setTimeout(() => URL.revokeObjectURL(oldSrc), 0);
+                // Use requestIdleCallback with fallback to setTimeout to prevent memory buildup
+                if (window.requestIdleCallback) {
+                  requestIdleCallback(() => URL.revokeObjectURL(oldSrc), { timeout: 100 });
+                } else {
+                  setTimeout(() => URL.revokeObjectURL(oldSrc), 0);
+                }
               }
               imgRef.current.src = url;
             } else {

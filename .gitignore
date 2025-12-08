@@ -2,6 +2,8 @@
 retinaface/
 retinaface-R50/
 
+streaming-server/faces/
+
 # Python
 __pycache__/
 *.py[cod]
