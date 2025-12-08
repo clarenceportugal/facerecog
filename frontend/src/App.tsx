@@ -45,6 +45,7 @@ import PendingDeans from "./pages/superadmin/PendingDeans";
 }
 import DeanMain from "./pages/dean/DeanMain";
 import DeanDashboard from "./pages/dean/DeanDashboard";
+import DeanCourseBlockManagement from "./pages/dean/DeanCourseBlockManagement";
 import ProgramchairInfo from "./pages/dean/ProgramchairInfo";
 import DeanLiveVideo from "./pages/dean/DeanLiveVideo";
 import PendingStaff from "./pages/dean/PendingStaff";
@@ -141,6 +142,15 @@ export default function App() {
           element={
             <DeanMain>
               <DeanFacultyReports />
+            </DeanMain>
+          }
+        />
+
+        <Route
+          path="/dean-course-block-management/:id"
+          element={
+            <DeanMain>
+              <DeanCourseBlockManagement />
             </DeanMain>
           }
         />
@@ -294,8 +304,6 @@ export default function App() {
             </AdminMain>
           }
         />
-
-
         <Route
           path="/camera-test"
           element={<CameraTest />}
