@@ -1329,6 +1329,192 @@ router.get("/subjects", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+router.get("/subjects-by-course", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const courseRaw = (req.query.course as string)?.trim().toUpperCase();
+
+    if (!courseRaw) {
+      res.status(400).json({ message: "Missing course query parameter" });
+      return;
+    }
+
+    // Extract last 2 letters of course (e.g., BSIT -> IT)
+    const lastTwo = courseRaw.slice(-2).toUpperCase();
+
+    // Build dynamic regex that matches subjects starting with those letters
+    const prefixRegex = new RegExp(`^\\s*${lastTwo}`, "i");
+
+    // Get matching subjects
+    const subjects = await Subject.find({
+      courseCode: { $regex: prefixRegex }
+    }).lean();
+
+    // Normalize and deduplicate subjects by courseCode, but also keep an _id
+    const subjectsMap = new Map<
+      string,
+      { _id?: string; courseCode: string; courseTitle: string }
+    >();
+
+    subjects.forEach((s: any) => {
+      if (!s || !s.courseCode) return;
+
+      const normalized = String(s.courseCode).trim().replace(/\s+/g, " ").toUpperCase();
+
+      if (!subjectsMap.has(normalized)) {
+        subjectsMap.set(normalized, {
+          _id: s._id ? String(s._id) : undefined,
+          courseCode: normalized,
+          courseTitle: s.courseTitle ?? "",
+        });
+      }
+    });
+
+    // Convert to array and sort alphabetically by courseCode
+    const result = Array.from(subjectsMap.values()).sort((a, b) =>
+      a.courseCode.localeCompare(b.courseCode, undefined, { numeric: true, sensitivity: "base" })
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching subjects dynamically:", error);
+    res.status(500).json({ message: "Error fetching subjects" });
+  }
+});
+
+// Helper: normalize courseCode (trim, collapse spaces, uppercase)
+const normalizeCourseCode = (code: string): string =>
+  String(code).trim().replace(/\s+/g, " ").toUpperCase();
+
+// Helper: ensure the code starts with an allowed prefix (IT or IS) after normalization
+const isAllowedPrefix = (normalizedCode: string): boolean => /^\s*(IT|IS)(?=[\s\d]|$)/i.test(normalizedCode);
+
+// CREATE (Add) - POST /subjects-it
+router.post("/subjects-it", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { courseCode, courseTitle } = req.body ?? {};
+
+    if (!courseCode || !courseTitle) {
+      res.status(400).json({ success: false, message: "courseCode and courseTitle are required" });
+      return;
+    }
+
+    const normalized = normalizeCourseCode(courseCode);
+
+    if (!isAllowedPrefix(normalized)) {
+      res.status(400).json({
+        success: false,
+        message: "courseCode must start with one of the allowed prefixes: 'IT' or 'IS' (e.g. 'IT 101', 'IS101').",
+      });
+      return;
+    }
+
+    // Check duplicate by normalized code (exact match, case-insensitive)
+    const existing = await Subject.findOne({ courseCode: { $regex: `^${normalized}$`, $options: "i" } });
+    if (existing) {
+      res.status(409).json({ success: false, message: "A subject with that courseCode already exists" });
+      return;
+    }
+
+    const created = await Subject.create({
+      courseCode: normalized,
+      courseTitle: String(courseTitle).trim(),
+    });
+
+    res.status(201).json({
+      success: true,
+      data: { courseCode: created.courseCode, courseTitle: created.courseTitle, _id: created._id },
+    });
+  } catch (error) {
+    console.error("Error creating subject:", error);
+    res.status(500).json({ success: false, message: "Error creating subject" });
+  }
+});
+
+
+// UPDATE (Edit) - PUT /subjects-it/:id
+router.put("/subjects-it/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { courseCode, courseTitle } = req.body ?? {};
+
+    if (!id) {
+      res.status(400).json({ success: false, message: "id is required" });
+      return;
+    }
+
+    if (!courseCode && !courseTitle) {
+      res.status(400).json({ success: false, message: "At least one of courseCode or courseTitle must be provided" });
+      return;
+    }
+
+    const update: Partial<{ courseCode: string; courseTitle: string }> = {};
+
+    if (courseCode) {
+      const normalized = normalizeCourseCode(courseCode);
+      if (!isAllowedPrefix(normalized)) {
+        res.status(400).json({
+          success: false,
+          message: "courseCode must start with one of the allowed prefixes: 'IT' or 'IS' (e.g. 'IT 101', 'IS101').",
+        });
+        return;
+      }
+
+      // Check duplicate on other documents
+      const dup = await Subject.findOne({
+        _id: { $ne: id },
+        courseCode: { $regex: `^${normalized}$`, $options: "i" },
+      });
+      if (dup) {
+        res.status(409).json({ success: false, message: "Another subject with that courseCode already exists" });
+        return;
+      }
+
+      update.courseCode = normalized;
+    }
+
+    if (courseTitle) update.courseTitle = String(courseTitle).trim();
+
+    const updated = await Subject.findByIdAndUpdate(id, update, { new: true, runValidators: true }).lean();
+    if (!updated) {
+      res.status(404).json({ success: false, message: "Subject not found" });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: { courseCode: updated.courseCode, courseTitle: updated.courseTitle, _id: updated._id },
+    });
+  } catch (error) {
+    console.error("Error updating subject:", error);
+    res.status(500).json({ success: false, message: "Error updating subject" });
+  }
+});
+
+
+// DELETE - DELETE /subjects-it/:id
+router.delete("/subjects-it/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ success: false, message: "id is required" });
+      return;
+    }
+
+    const deleted = await Subject.findByIdAndDelete(id).lean();
+    if (!deleted) {
+      res.status(404).json({ success: false, message: "Subject not found" });
+      return;
+    }
+
+    res.status(200).json({ success: true, message: "Subject deleted", data: { courseCode: deleted.courseCode, courseTitle: deleted.courseTitle, _id: deleted._id } });
+  } catch (error) {
+    console.error("Error deleting IT subject:", error);
+    res.status(500).json({ success: false, message: "Error deleting subject" });
+  }
+});
+
+
+
 // GET ROOMS LIST - WORKS OFFLINE
 router.get("/rooms", async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1352,6 +1538,148 @@ router.get("/sections", async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ message: "Error fetching sections" });
   }
 });
+
+router.get("/all-sections", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const courseQuery = (req.query.course as string)?.toUpperCase().trim();
+
+    if (!courseQuery) {
+      res.status(400).json({ message: "Course query parameter is required" });
+      return;
+    }
+
+    // Find sections with matching course (case-insensitive)
+    const sections = await Section.find({ course: courseQuery }).lean();
+
+    res.json(
+      sections.map((s: any) => ({
+        _id: s._id,
+        college: s.college,
+        course: s.course,
+        section: s.section,
+        block: s.block,
+        createdAt: s.createdAt, // TS now accepts because of 'any'
+        updatedAt: s.updatedAt,
+      }))
+    );
+  } catch (error) {
+    console.error("Error fetching sections:", error);
+    res.status(500).json({ message: "Error fetching sections" });
+  }
+});
+
+router.post("/add-section", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { course, section, block, college } = req.body ?? {};
+
+    if (!course || !section || !college) {
+      res.status(400).json({ message: "'course', 'section', and 'college' are required" });
+      return;
+    }
+
+    // Validate ObjectId
+    if (!mongoose.isValidObjectId(college)) {
+      res.status(400).json({ message: "Invalid college ObjectId" });
+      return;
+    }
+
+    const courseNormalized = String(course).toUpperCase().trim();
+    const sectionNormalized = String(section).trim();
+    const blockNormalized = block != null ? String(block).trim() : undefined;
+
+    // Check duplicate (same course + section + block + college)
+    const existing = await Section.findOne({
+      course: courseNormalized,
+      section: sectionNormalized,
+      block: blockNormalized ?? null,
+      college: new mongoose.Types.ObjectId(college),
+    }).lean();
+
+    if (existing) {
+      res.status(409).json({ message: "Section already exists for this course/section/block/college" });
+      return;
+    }
+
+    const newSection = new Section({
+      course: courseNormalized,
+      section: sectionNormalized,
+      block: blockNormalized,
+      college: new mongoose.Types.ObjectId(college),
+    });
+
+    const saved = await newSection.save();
+
+    res.status(201).json({ data: saved });
+  } catch (error) {
+    console.error("Error creating section:", error);
+    res.status(500).json({ message: "Error creating section" });
+  }
+});
+
+router.put("/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+
+    if (!mongoose.isValidObjectId(id)) {
+      res.status(400).json({ message: "Invalid section id" });
+      return;
+    }
+
+    const { course, section, block, college } = req.body ?? {};
+    const updates: any = {};
+
+    if (course != null) updates.course = String(course).toUpperCase().trim();
+    if (section != null) updates.section = String(section).trim();
+    if (block !== undefined) updates.block = block ? String(block).trim() : undefined;
+
+    // Validate & assign college ObjectId
+    if (college !== undefined) {
+      if (!mongoose.isValidObjectId(college)) {
+        res.status(400).json({ message: "Invalid college ObjectId" });
+        return;
+      }
+      updates.college = new mongoose.Types.ObjectId(college);
+    }
+
+    updates.updatedAt = new Date();
+
+    const updated = await Section.findByIdAndUpdate(id, updates, { new: true }).lean();
+
+    if (!updated) {
+      res.status(404).json({ message: "Section not found" });
+      return;
+    }
+
+    res.json({ data: updated });
+  } catch (error) {
+    console.error("Error updating section:", error);
+    res.status(500).json({ message: "Error updating section" });
+  }
+});
+
+router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+
+    if (!mongoose.isValidObjectId(id)) {
+      res.status(400).json({ message: "Invalid section id" });
+      return;
+    }
+
+    const deleted = await Section.findByIdAndDelete(id).lean();
+
+    if (!deleted) {
+      res.status(404).json({ message: "Section not found" });
+      return;
+    }
+
+    res.json({ data: deleted, message: "Section deleted" });
+  } catch (error) {
+    console.error("Error deleting section:", error);
+    res.status(500).json({ message: "Error deleting section" });
+  }
+});
+
 
 // Get users by college code - WORKS OFFLINE
 router.get(
