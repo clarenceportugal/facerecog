@@ -20,6 +20,7 @@ import PendingFaculty from "./pages/programchairperson/PendingFaculty";
 import FaceRegistration from "./pages/programchairperson/FaceRegistration";
 import CameraTest from "./components/CameraTest";
 import TimeBreakdown from "./pages/programchairperson/TimeBreakdown";
+import CourseBlockManagement from "./pages/programchairperson/CourseBlockManagement";
 {
   /* for faculty*/
 }
@@ -281,6 +282,15 @@ export default function App() {
           element={
             <AdminMain>
               <TimeBreakdown />
+            </AdminMain>
+          }
+        />
+
+        <Route
+          path="/course-block-management/:id"
+          element={
+            <AdminMain>
+              <CourseBlockManagement />
             </AdminMain>
           }
         />
