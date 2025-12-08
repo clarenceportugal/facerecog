@@ -73,9 +73,13 @@ USE_LOCAL_CACHE_FOR_DETECTION = False  # Disabled - always use MongoDB
 
 # ⚡ MAXIMUM PERFORMANCE: Optimized for i5 11400H + RTX 3050 Ti (4GB) + 32GB RAM
 # Detection threshold: Optimized for accuracy and speed
-DETECTION_THRESHOLD = 0.35  # Balanced for accuracy and distant face detection
+DETECTION_THRESHOLD = 0.10  # Ultra-low threshold for EXTREME distant + moving face detection (lower = more sensitive, detects smaller/farther/moving faces)
+# Minimum detection score: Filter out low-confidence detections for better accuracy
+MIN_DETECTION_SCORE = 0.20  # Lowered to allow more distant and moving faces (handles motion blur better)
 # Recognition threshold: Optimized for fast real-time recognition
-CONF_THRESHOLD = 0.41  # Higher threshold for better accuracy (increased by 0.03), RTX 3050 Ti handles it fast
+CONF_THRESHOLD = 0.36  # Slightly lower for recognizing distant faces while maintaining accuracy
+# Minimum face size: Filter out very small faces that are likely false positives
+MIN_FACE_SIZE = 12  # Lowered to detect smaller faces at greater distances (filters out extremely tiny false detections)
 ABSENCE_TIMEOUT_SECONDS = 300  # 5 minutes = 300 seconds
 LATE_THRESHOLD_MINUTES = 15  # 15 minutes late threshold
 SCHEDULE_RECHECK_INTERVAL_SECONDS = 5  # Re-check schedules every 5 seconds for existing sessions (real-time updates)
@@ -786,7 +790,7 @@ reload_requested = threading.Event()
 person_sessions = {}
 
 # ⚡ ZERO-LAG ARCHITECTURE: Separate threads for video and detection
-frame_queue = Queue(maxsize=2)  # Small queue - only keep latest frames
+frame_queue = Queue(maxsize=5)  # Increased queue size for moving users - keep more frames for better motion detection
 detection_queue = Queue(maxsize=100)  # Results queue
 latest_detection_result = {"faces": [], "events": []}
 detection_lock = threading.Lock()
@@ -1283,9 +1287,9 @@ def face_detection_thread(app):
     
     while True:
         try:
-            # Get frame from queue (non-blocking with timeout)
+            # Get frame from queue (non-blocking with shorter timeout for faster processing of moving users)
             try:
-                frame_data = frame_queue.get(timeout=0.1)
+                frame_data = frame_queue.get(timeout=0.05)  # Shorter timeout = faster processing = better for moving users
             except Empty:
                 continue
             
@@ -1744,10 +1748,10 @@ try:
     
     # Detection size for GPU vs CPU
     # Larger size = better distant face detection, but slightly slower
-    # 640x640 = optimal balance for distant faces + speed on GTX 3050 Ti
+    # 1280x1280 = EXTREME distant face detection while maintaining speed on RTX 3050 Ti
     if gpu_available:
-        det_size = (640, 640)  # Increased from 512x512 for better distant face detection
-        print("[INFO] ⚡ GPU: Using 640x640 detection for RTX 3050 Ti (optimized for distant faces + maximum speed)", file=sys.stderr, flush=True)
+        det_size = (1280, 1280)  # Increased to 1280x1280 for EXTREME distant face detection (RTX 3050 Ti can handle it)
+        print("[INFO] ⚡ GPU: Using 1280x1280 detection for RTX 3050 Ti (EXTREME distant face detection + fast processing)", file=sys.stderr, flush=True)
     else:
         det_size = (320, 320)  # CPU: balance speed and accuracy
         print("[INFO] CPU: Using 320x320 detection for balanced performance", file=sys.stderr, flush=True)
@@ -1810,26 +1814,50 @@ try:
             if bboxes.shape[0] == 0:
                 return []
             
-            # Note: Detection model already filters by threshold, so we don't need additional filtering
-            # This ensures all detected faces are processed (especially important for distant faces)
+            # ⚡ ACCURACY FILTERING: Filter out low-confidence detections and very small faces
+            # Get image dimensions for size validation
+            img_height, img_width = img.shape[:2]
             
-            num_faces = bboxes.shape[0]
+            # Filter by detection score and face size
+            valid_indices = []
+            for i in range(bboxes.shape[0]):
+                det_score = float(bboxes[i, 4])
+                x1, y1, x2, y2 = bboxes[i, 0:4]
+                face_width = x2 - x1
+                face_height = y2 - y1
+                
+                # Filter: minimum detection score AND minimum face size
+                if det_score >= MIN_DETECTION_SCORE and face_width >= MIN_FACE_SIZE and face_height >= MIN_FACE_SIZE:
+                    valid_indices.append(i)
+            
+            if len(valid_indices) == 0:
+                return []
+            
+            # Keep only valid detections
+            bboxes = bboxes[valid_indices]
+            if kpss is not None:
+                if isinstance(kpss, np.ndarray):
+                    kpss = kpss[valid_indices]
+                else:
+                    kpss = [kpss[i] for i in valid_indices]
+            
+            num_faces = len(valid_indices)
             
             # Step 2: Batch align ALL faces at once (CPU - ULTRA-OPTIMIZED)
             # ⚡ ULTRA-OPTIMIZED: Pre-allocate with exact size, avoid list operations
             if kpss is None:
                 aligned_faces = []
-                valid_indices = []
+                alignment_indices = []
             else:
                 # Pre-allocate arrays for maximum performance
                 aligned_faces = []
-                valid_indices = []
+                alignment_indices = []
                 # ⚡ OPTIMIZED: Single pass, no resizing needed
                 for i in range(num_faces):
                     if kpss[i] is not None:
                         aimg = self.face_align.norm_crop(img, kpss[i])
                         aligned_faces.append(aimg)
-                        valid_indices.append(i)
+                        alignment_indices.append(i)
             
             # Step 3: Batch get embeddings for ALL faces in SINGLE GPU call
             embeddings = [None] * num_faces
@@ -1842,16 +1870,16 @@ try:
                     # Attempt batch inference (faster for multiple faces)
                     if hasattr(self.rec_model, 'get_feat_batch') and len(aligned_faces) > 1:
                         batch_embs = self.rec_model.get_feat_batch(batch_imgs)
-                        for idx, aligned_idx in enumerate(valid_indices):
+                        for idx, aligned_idx in enumerate(alignment_indices):
                             embeddings[aligned_idx] = batch_embs[idx].flatten()
                     else:
                         # Fallback: optimized loop with pre-allocated array
-                        for idx, aligned_idx in enumerate(valid_indices):
+                        for idx, aligned_idx in enumerate(alignment_indices):
                             emb = self.rec_model.get_feat(aligned_faces[idx]).flatten()
                             embeddings[aligned_idx] = emb
                 except:
                     # Fallback to individual processing if batch fails
-                    for idx, aligned_idx in enumerate(valid_indices):
+                    for idx, aligned_idx in enumerate(alignment_indices):
                         emb = self.rec_model.get_feat(aligned_faces[idx]).flatten()
                         embeddings[aligned_idx] = emb
             
@@ -1878,7 +1906,9 @@ try:
     print(f"[INFO] ✅ Face models loaded successfully on {device_type} (took {init_time:.2f}s)", file=sys.stderr, flush=True)
     print(f"[INFO] 🎯 Model: {model_name}, det_size={det_size}", file=sys.stderr, flush=True)
     print(f"[INFO] 📏 Detection threshold: {DETECTION_THRESHOLD} (lower = better for distant faces)", file=sys.stderr, flush=True)
-    print(f"[INFO] 📏 Recognition threshold: {CONF_THRESHOLD} (lower = recognizes distant faces)", file=sys.stderr, flush=True)
+    print(f"[INFO] ✅ Minimum detection score: {MIN_DETECTION_SCORE} (filters low-confidence detections for accuracy)", file=sys.stderr, flush=True)
+    print(f"[INFO] ✅ Minimum face size: {MIN_FACE_SIZE}px (filters tiny false detections for accuracy)", file=sys.stderr, flush=True)
+    print(f"[INFO] 📏 Recognition threshold: {CONF_THRESHOLD} (higher = more accurate, reduces false positives)", file=sys.stderr, flush=True)
     if ctx_id >= 0:
         print(f"[INFO] ⚡ GPU Context ID: {ctx_id} - Face detection will run on GPU with ZERO DELAY!", file=sys.stderr, flush=True)
         print(f"[INFO] 👁️ Optimized for FAST distant face detection - detects & recognizes faces quickly even when far away!", file=sys.stderr, flush=True)

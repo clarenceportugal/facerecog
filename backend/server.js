@@ -25,7 +25,7 @@ const USE_MEDIAMTX = false; // Set to false to use FFmpeg directly (no MediaMTX 
 const CAMERA_CONFIG = {
   camera1: {
     name: 'Camera 1',
-    rtspUrl: 'rtsp://admin:Eduvision124@192.168.1.15:554/Streaming/Channels/101',
+    rtspUrl: 'rtsp://admin:Eduvision124@192.168.0.105:554/Streaming/Channels/101',
     mediamtxStream: 'mycamera' // MediaMTX stream name (must match the path name in mediamtx.yml)
   },
   camera2: {
@@ -654,12 +654,12 @@ let frameToClientTimestamps = new Map(); // frameNumber -> sent to client timest
 let totalFrameCaptureToClient = 0;
 let totalFramesToClient = 0;
       // ⚡ Frame skip rate: Lower = more frames processed (faster detection)
-      // RTX 3050 Ti (4GB) + 32GB RAM + 60 FPS: Process every 2nd frame (2) for smooth 60 FPS without buffer overflow
-      // At 60 FPS, processing every frame (1) may cause buffer overflow, so 2 is optimal
-      // CPU: Use 5 or higher to reduce load
+      // RTX 3050 Ti (4GB) + 32GB RAM + 60 FPS: Process every frame (1) for moving users detection
+      // At 60 FPS, processing every frame ensures moving users are detected
+      // CPU: Use 3 or higher to reduce load
       // Set via FRAME_SKIP_RATE environment variable
-      // Default: 2 for RTX 3050 Ti at 60 FPS = process every 2nd frame (30 FPS detection rate, smooth stream)
-      const FRAME_SKIP_RATE = parseInt(process.env.FRAME_SKIP_RATE) || 2;
+      // Default: 1 for RTX 3050 Ti at 60 FPS = process every frame (60 FPS detection rate, better for moving users)
+      const FRAME_SKIP_RATE = parseInt(process.env.FRAME_SKIP_RATE) || 1;
 
 function sendFrameToPython(jpgBuffer, cameraId) {
   if (!pythonReady) {
@@ -809,7 +809,7 @@ function startMediaMTXStream(ws, cameraId, streamName, cameraName, retryCount = 
           console.error(`[${cameraName}] ${errorMsg}`);
           console.error(`[${cameraName}] Troubleshooting:`);
           console.error(`[${cameraName}] 1. Check MediaMTX logs for connection errors`);
-          console.error(`[${cameraName}] 2. Verify camera RTSP URL in mediamtx.yml: rtsp://admin:Eduvision124@192.168.8.5:554/Streaming/Channels/101`);
+          console.error(`[${cameraName}] 2. Verify camera RTSP URL in mediamtx.yml: rtsp://admin:Eduvision124@192.168.0.105:554/Streaming/Channels/101`);
           console.error(`[${cameraName}] 3. Test camera in VLC with the same RTSP URL`);
           console.error(`[${cameraName}] 4. Try accessing MediaMTX stream directly: ${mjpegUrl}`);
           if (ws.readyState === WebSocket.OPEN) {
