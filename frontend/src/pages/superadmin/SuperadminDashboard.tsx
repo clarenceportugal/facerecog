@@ -92,9 +92,10 @@ const SuperAdminDashboard: React.FC = () => {
   const [roomValue, setRoomValue] = useState("all");
   const [programs, setPrograms] = useState<any[]>([]);
 
-  const shortCourseValue = courseValue.replace(/^bs/i, "").toUpperCase();
+  const shortCourseValue = courseValue === "all" ? "" : courseValue.replace(/^bs/i, "").toUpperCase();
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [loadingColleges, setLoadingColleges] = useState(false);
+  const [allSchedules, setAllSchedules] = useState<Schedule[]>([]);
 
   const handleCollegeChange = async (code: string) => {
     setCollegeValue(code);
@@ -149,14 +150,35 @@ const SuperAdminDashboard: React.FC = () => {
           }
         );
         console.log("Received all schedules data:", response.data);
-        setSchedules(response.data);
+        setAllSchedules(response.data);
+        
+        // Filter by room if needed
+        let filtered = response.data;
+        if (roomValue !== "all") {
+          filtered = response.data.filter((sched: Schedule) => sched.room === roomValue);
+        }
+        setSchedules(filtered);
       } catch (error) {
         console.error("Error fetching schedules:", error);
       }
     };
 
+    if (courseValue !== "all") {
     fetchSchedules();
-  }, [shortCourseValue]);
+    } else {
+      setAllSchedules([]);
+      setSchedules([]);
+    }
+  }, [shortCourseValue, courseValue]);
+
+  useEffect(() => {
+    // Filter schedules by room when roomValue changes
+    if (roomValue === "all") {
+      setSchedules(allSchedules);
+    } else {
+      setSchedules(allSchedules.filter((sched) => sched.room === roomValue));
+    }
+  }, [roomValue, allSchedules]);
 
   useEffect(() => {
     const fetchColleges = async () => {
@@ -278,48 +300,62 @@ const SuperAdminDashboard: React.FC = () => {
 
   return (
     <SuperadminMain>
-      <Box sx={{ color: "grey.900", p: { xs: 2, sm: 3, md: 1 } }}>
-        <Box maxWidth="1200px" mx="auto">
-          {/* Header */}
-          <Box mb={3}>
-            <Typography variant="h4" fontWeight={600}>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
               Super Admin Dashboard
             </Typography>
-            <Typography variant="body2" color="text.secondary" mt={0.5}>
-              <span style={{ fontWeight: 400 }}>Dashboard</span> /{" "}
-              <span style={{ fontStyle: "italic" }}>Attendance</span>
+          <Typography variant="body2" color="text.secondary">
+            System-wide overview of users, schedules, and attendance across all colleges
             </Typography>
           </Box>
 
-          <Typography
-            variant="h6"
-            fontWeight="bold"
-            color="text.primary"
-            sx={{ mb: 0.5 }}
-          >
-            Total Users per Role:
-          </Typography>
-
-          <Box sx={{ pb: 2 }}>
+        {/* Stats Cards */}
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6} md={3}>
                 <Card
-                  elevation={1}
-                  sx={{ display: "flex", alignItems: "center", p: 2 }}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                p: 2.5,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                  boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.12)",
+                },
+              }}
                 >
-                  <Avatar sx={{ bgcolor: "#f3e8ff", color: "#9f7aea", mr: 2 }}>
+              <Avatar
+                sx={{
+                  bgcolor: "#f3e8ff",
+                  color: "#9f7aea",
+                  mr: 2,
+                  width: 56,
+                  height: 56,
+                }}
+              >
                     <SchoolIcon />
                   </Avatar>
-                  <Box>
+              <Box flex={1}>
                     <Typography
-                      variant="h6"
-                      fontWeight="600"
+                  variant="h5"
+                  fontWeight={700}
                       color="text.primary"
                     >
                       {counts.dean}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Total Dean
+                <Typography variant="body2" color="text.secondary" mt={0.5}>
+                  Total Deans
                     </Typography>
                   </Box>
                 </Card>
@@ -327,22 +363,40 @@ const SuperAdminDashboard: React.FC = () => {
 
               <Grid item xs={12} sm={6} md={3}>
                 <Card
-                  elevation={1}
-                  sx={{ display: "flex", alignItems: "center", p: 2 }}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                p: 2.5,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                  boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.12)",
+                },
+              }}
                 >
-                  <Avatar sx={{ bgcolor: "#f3e8ff", color: "#9f7aea", mr: 2 }}>
+              <Avatar
+                sx={{
+                  bgcolor: "#e0f2fe",
+                  color: "#0ea5e9",
+                  mr: 2,
+                  width: 56,
+                  height: 56,
+                }}
+              >
                     <EmojiEventsIcon />
                   </Avatar>
-                  <Box>
+              <Box flex={1}>
                     <Typography
-                      variant="h6"
-                      fontWeight="600"
+                  variant="h5"
+                  fontWeight={700}
                       color="text.primary"
                     >
                       {counts.programChairperson}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Total Program Chairperson
+                <Typography variant="body2" color="text.secondary" mt={0.5}>
+                  Program Chairpersons
                     </Typography>
                   </Box>
                 </Card>
@@ -350,21 +404,39 @@ const SuperAdminDashboard: React.FC = () => {
 
               <Grid item xs={12} sm={6} md={3}>
                 <Card
-                  elevation={1}
-                  sx={{ display: "flex", alignItems: "center", p: 2 }}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                p: 2.5,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                  boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.12)",
+                },
+              }}
                 >
-                  <Avatar sx={{ bgcolor: "#e0f2fe", color: "#38bdf8", mr: 2 }}>
+              <Avatar
+                sx={{
+                  bgcolor: "#dbeafe",
+                  color: "#3b82f6",
+                  mr: 2,
+                  width: 56,
+                  height: 56,
+                }}
+              >
                     <PeopleIcon />
                   </Avatar>
-                  <Box>
+              <Box flex={1}>
                     <Typography
-                      variant="h6"
-                      fontWeight="600"
+                  variant="h5"
+                  fontWeight={700}
                       color="text.primary"
                     >
                       {counts.instructor}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" mt={0.5}>
                       Total Instructors
                     </Typography>
                   </Box>
@@ -373,62 +445,84 @@ const SuperAdminDashboard: React.FC = () => {
 
               <Grid item xs={12} sm={6} md={3}>
                 <Card
-                  elevation={1}
-                  sx={{ display: "flex", alignItems: "center", p: 2 }}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                p: 2.5,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                  boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.12)",
+                },
+              }}
                 >
-                  <Avatar sx={{ bgcolor: "#fce7f3", color: "#ec4899", mr: 2 }}>
+              <Avatar
+                sx={{
+                  bgcolor: "#fce7f3",
+                  color: "#ec4899",
+                  mr: 2,
+                  width: 56,
+                  height: 56,
+                }}
+              >
                     <AdminPanelSettingsIcon />
                   </Avatar>
-                  <Box>
+              <Box flex={1}>
                     <Typography
-                      variant="h6"
-                      fontWeight="600"
+                  variant="h5"
+                  fontWeight={700}
                       color="text.primary"
                     >
                       {counts.superadmin}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Total Superadmin
+                <Typography variant="body2" color="text.secondary" mt={0.5}>
+                  Total Superadmins
                     </Typography>
                   </Box>
                 </Card>
               </Grid>
             </Grid>
-          </Box>
 
-          <Box
-            display="grid"
-            gridTemplateColumns={{ xs: "1fr", lg: "repeat(3, 1fr)" }}
-            gap={3}
-            mb={3}
-          >
-            {/* Bar Chart */}
+        {/* Chart Section */}
             <Paper
-              variant="outlined"
               sx={{
                 p: 3,
-                gridColumn: { md: "span 3" },
-                maxHeight: 400,
-                overflow: "auto",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+            backgroundColor: "#fff",
               }}
             >
               <Box
                 display="flex"
                 justifyContent="space-between"
                 alignItems="center"
-                mb={2}
+            mb={3}
+            pb={2}
+            borderBottom="2px solid #e0e0e0"
               >
                 <Typography
-                  variant="subtitle2"
-                  color="primary"
-                  fontWeight={600}
+              variant="h6"
+              fontWeight={700}
+              color="#1a1a1a"
                 >
-                  Today Schedule Chart
+              Today's Schedule Chart
                 </Typography>
 
                 <Box display="flex" gap={2}>
                   {/* College Dropdown */}
-                  <FormControl size="small" sx={{ minWidth: 200 }}>
+              <FormControl
+                size="small"
+                sx={{
+                  minWidth: 200,
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                  },
+                }}
+              >
                     <InputLabel id="college-filter-label">College</InputLabel>
                     <Select
                       labelId="college-filter-label"
@@ -441,6 +535,7 @@ const SuperAdminDashboard: React.FC = () => {
                         (loadingColleges ? "Loading..." : "Select College")
                       }
                     >
+                  <MenuItem value="all">All Colleges</MenuItem>
                       {loadingColleges ? (
                         <MenuItem disabled>
                           <Box display="flex" alignItems="center" gap={1}>
@@ -459,7 +554,17 @@ const SuperAdminDashboard: React.FC = () => {
                   </FormControl>
 
                   {/* Course Dropdown */}
-                  <FormControl size="small" sx={{ minWidth: 200 }}>
+              <FormControl
+                size="small"
+                sx={{
+                  minWidth: 200,
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                  },
+                }}
+              >
                     <InputLabel id="course-filter-label">Course</InputLabel>
                     <Select
                       labelId="course-filter-label"
@@ -471,6 +576,7 @@ const SuperAdminDashboard: React.FC = () => {
                         selected?.toUpperCase() || "Select Course"
                       }
                     >
+                  <MenuItem value="all">All Courses</MenuItem>
                       {loadingCourses ? (
                         <MenuItem disabled>
                           <CircularProgress size={20} sx={{ mr: 1 }} />
@@ -492,7 +598,17 @@ const SuperAdminDashboard: React.FC = () => {
                   </FormControl>
 
                   {/* Room Dropdown */}
-                  <FormControl size="small" sx={{ minWidth: 200 }}>
+              <FormControl
+                size="small"
+                sx={{
+                  minWidth: 200,
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                  },
+                }}
+              >
                     <InputLabel id="room-filter-label">Room</InputLabel>
                     <Select
                       labelId="room-filter-label"
@@ -501,6 +617,7 @@ const SuperAdminDashboard: React.FC = () => {
                       label="Room"
                       onChange={handleRoomChange}
                     >
+                  <MenuItem value="all">All Rooms</MenuItem>
                       {rooms.map((room: any) => (
                         <MenuItem key={room._id} value={room.name}>
                           {room.name}
@@ -533,48 +650,61 @@ const SuperAdminDashboard: React.FC = () => {
                 )}
               </div>
             </Paper>
-          </Box>
 
-          <Box
-            display="grid"
-            gridTemplateColumns={{ xs: "1fr", md: "repeat(3, 1fr)" }}
-            gap={3}
-            mb={6}
-          >
+        {/* Schedules and Activity Section */}
+        <Grid container spacing={3}>
+          <Grid item xs={12} lg={8}>
             <Paper
-              variant="outlined"
               sx={{
                 p: 3,
-                gridColumn: { xs: "span 1", lg: "span 2" },
-                overflowX: "auto",
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                backgroundColor: "#fff",
+                overflow: "hidden",
               }}
             >
               <Typography
-                variant="subtitle2"
-                color="primary"
-                fontWeight={600}
-                mb={2}
+                variant="h6"
+                fontWeight={700}
+                color="#1a1a1a"
+                mb={3}
+                pb={2}
+                borderBottom="2px solid #e0e0e0"
               >
                 All Schedules Today
               </Typography>
               <TableContainer>
-                <Table size="small">
+                <Table>
                   <TableHead>
-                    <TableRow sx={{ backgroundColor: grey[100] }}>
-                      <TableCell sx={{ fontWeight: 600 }}>S. No</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Instructor</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Start Time</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>End Time</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Room</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Section</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Course</TableCell>
+                    <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        S. No
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        Instructor
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        Start Time
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        End Time
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        Room
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        Section
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                        Course
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {schedules.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} align="center">
-                          No schedules found.
+                        <TableCell colSpan={7} align="center" sx={{ py: 6, color: "text.secondary", fontStyle: "italic" }}>
+                          No schedules found for today.
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -582,24 +712,29 @@ const SuperAdminDashboard: React.FC = () => {
                         <TableRow
                           key={idx}
                           sx={{
-                            backgroundColor: idx % 2 === 0 ? "white" : grey[50],
+                            backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
+                            transition: "background-color 0.2s ease",
+                            "&:hover": {
+                              backgroundColor: "#f0f4ff",
+                              transform: "scale(1.001)",
+                            },
                           }}
                         >
-                          <TableCell sx={{ fontWeight: 600 }}>
+                          <TableCell sx={{ fontWeight: 600, py: 1.5 }}>
                             {idx + 1}
                           </TableCell>
-                          <TableCell>
+                          <TableCell sx={{ py: 1.5 }}>
                             {schedule.instructor
                               ? `${schedule.instructor.first_name} ${schedule.instructor.last_name}`
                               : "N/A"}
                           </TableCell>
-                          <TableCell>{schedule.startTime}</TableCell>
-                          <TableCell>{schedule.endTime}</TableCell>
-                          <TableCell>{schedule.room}</TableCell>
-                          <TableCell>
+                          <TableCell sx={{ py: 1.5 }}>{schedule.startTime}</TableCell>
+                          <TableCell sx={{ py: 1.5 }}>{schedule.endTime}</TableCell>
+                          <TableCell sx={{ py: 1.5 }}>{schedule.room}</TableCell>
+                          <TableCell sx={{ py: 1.5 }}>
                             {schedule.section?.sectionName || "N/A"}
                           </TableCell>
-                          <TableCell>
+                          <TableCell sx={{ py: 1.5 }}>
                             {schedule.courseTitle} ({schedule.courseCode})
                           </TableCell>
                         </TableRow>
@@ -609,27 +744,47 @@ const SuperAdminDashboard: React.FC = () => {
                 </Table>
               </TableContainer>
             </Paper>
+          </Grid>
 
-            {/* Today Activity */}
-            <Paper variant="outlined" sx={{ p: 3 }}>
+          <Grid item xs={12} lg={4}>
+            <Paper
+              sx={{
+                p: 3,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                backgroundColor: "#fff",
+                height: "100%",
+              }}
+            >
               <Typography
-                variant="subtitle2"
-                color="primary"
-                fontWeight={600}
-                mb={2}
+                variant="h6"
+                fontWeight={700}
+                color="#1a1a1a"
+                mb={3}
+                pb={2}
+                borderBottom="2px solid #e0e0e0"
               >
-                Today Activity
+                Today's Activity
               </Typography>
               <Box ml={1} pl={1} display="flex" flexDirection="column" gap={2}>
                 {allFacultiesLogs.length === 0 ||
                 !allFacultiesLogs.some((log) => log.timeIn || log.timeout) ? (
+                  <Box
+                    display="flex"
+                    flexDirection="column"
+                    alignItems="center"
+                    justifyContent="center"
+                    py={4}
+                  >
                   <Typography
                     variant="body2"
-                    color="textSecondary"
+                      color="text.secondary"
                     textAlign="center"
+                      fontStyle="italic"
                   >
-                    There is no current activity today.
+                      No activity recorded today.
                   </Typography>
+                  </Box>
                 ) : (
                   allFacultiesLogs.map((log, index) => {
                     const entries = [];
@@ -713,8 +868,8 @@ const SuperAdminDashboard: React.FC = () => {
                 )}
               </Box>
             </Paper>
-          </Box>
-        </Box>
+          </Grid>
+        </Grid>
       </Box>
     </SuperadminMain>
   );

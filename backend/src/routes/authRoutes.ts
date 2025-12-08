@@ -209,9 +209,9 @@ router.post(
   "/generate-monthly-department-logs",
   async (req: Request, res: Response) => {
     try {
-      const { CourseName, selectedMonth, selectedYear, searchQuery } = req.body;
+      const { CourseName, startDate, endDate, searchQuery } = req.body;
 
-      console.log(`[REPORT] Generating report for CourseName: "${CourseName}", Month: ${selectedMonth}, Year: ${selectedYear}, SearchQuery: "${searchQuery}"`);
+      console.log(`[REPORT] Generating report for CourseName: "${CourseName}", StartDate: ${startDate}, EndDate: ${endDate}, SearchQuery: "${searchQuery}"`);
 
       // Use data service (works both online and offline)
       const allLogs = await LogService.findAll();
@@ -228,7 +228,7 @@ router.post(
 
       console.log(`[REPORT] Fetched ${logs.length} total logs from database`);
 
-      // 🔹 Filter logs by month and year before grouping, and filter out logs with null schedules
+      // 🔹 Filter logs by date range before grouping, and filter out logs with null schedules
       const filteredLogs = logs.filter((log: any) => {
         // Filter out logs with null/undefined schedules
         if (!log.schedule || log.schedule === null || log.schedule === undefined) {
@@ -237,17 +237,33 @@ router.post(
         
         if (!log.date) return false;
         const logDate = new Date(log.date);
-        const logYear = logDate.getFullYear();
-        const logMonth = logDate.getMonth() + 1; // 0-indexed in JS
+        logDate.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
 
-        const matchesYear = selectedYear
-          ? logYear === Number(selectedYear)
+        // If no date range specified, include all logs
+        if (!startDate && !endDate) {
+          return true;
+        }
+
+        // Check if log date is within range (including time)
+        // Parse the date string - could be YYYY-MM-DD or YYYY-MM-DD HH:mm:ss
+        const parseDate = (dateStr: string) => {
+          if (dateStr.includes(' ')) {
+            // Has time: YYYY-MM-DD HH:mm:ss
+            return new Date(dateStr.replace(' ', 'T'));
+          } else {
+            // No time: YYYY-MM-DD
+            return new Date(dateStr + 'T00:00:00');
+          }
+        };
+        
+        const afterStart = startDate 
+          ? logDate >= parseDate(startDate)
           : true;
-        const matchesMonth = selectedMonth
-          ? logMonth === Number(selectedMonth)
+        const beforeEnd = endDate 
+          ? logDate <= parseDate(endDate)
           : true;
 
-        return matchesYear && matchesMonth;
+        return afterStart && beforeEnd;
       });
 
       console.log(`[REPORT] Filtered ${filteredLogs.length} logs for report generation`);
@@ -335,14 +351,28 @@ router.post(
       }
 
       // 🔹 Report metadata — based on selected filters
-      const reportMonth = selectedMonth
-        ? new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
-            month: "long",
-          })
-        : "All Months";
-
-      const reportYear = selectedYear || "All Years";
-      const reportDate = `${reportMonth} ${reportYear}`;
+      // Format report date range (including time)
+      const formatDateTime = (dateStr: string) => {
+        const date = dateStr.includes(' ') 
+          ? new Date(dateStr.replace(' ', 'T'))
+          : new Date(dateStr + 'T00:00:00');
+        return date.toLocaleString('en-US', { 
+          month: 'long', 
+          day: 'numeric', 
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      };
+      
+      let reportDate = "All Dates";
+      if (startDate && endDate) {
+        reportDate = `${formatDateTime(startDate)} - ${formatDateTime(endDate)}`;
+      } else if (startDate) {
+        reportDate = `From ${formatDateTime(startDate)}`;
+      } else if (endDate) {
+        reportDate = `Until ${formatDateTime(endDate)}`;
+      }
 
       // 🔹 Load DOCX template
       const templatePath = path.join(
@@ -975,11 +1005,23 @@ router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const existingUserUsername = await UserService.findByUsername(username);
-    if (existingUserUsername) {
-      res.status(400).json({ message: "Username already exists" });
-      return;
+    // ⚡ AUTO-GENERATE UNIQUE USERNAME: If username exists, append number (1, 2, 3...) until unique
+    let finalUsername = username;
+    let counter = 1;
+    
+    while (await UserService.findByUsername(finalUsername)) {
+      finalUsername = `${username}${counter}`;
+      counter++;
+      
+      // Safety limit
+      if (counter > 999) {
+        res.status(500).json({ message: "Unable to generate unique username" });
+        return;
+      }
     }
+    
+    // Use finalUsername instead of reassigning username (which is const)
+    const uniqueUsername = finalUsername;
 
     // Find the college document
     const collegeDoc = await CollegeService.findByCode(collegeCode);
@@ -1001,7 +1043,7 @@ router.post("/faculty", async (req: Request, res: Response): Promise<void> => {
       first_name,
       middle_name: middle_name || "",
       ext_name: ext_name || "",
-      username,
+      username: uniqueUsername,
       email,
       password, // Will be hashed by UserService.create
       role,
@@ -1242,43 +1284,159 @@ router.post(
         section,
       } = req.body;
 
-      if (
-        !courseTitle ||
-        !courseCode ||
-        !instructor ||
-        !room ||
-        !startTime ||
-        !endTime ||
-        !days ||
-        !semesterStartDate ||
-        !semesterEndDate ||
-        !section
-      ) {
+      // ⚡ IMPROVED VALIDATION: Check each field individually and provide specific error messages
+      const missingFields: string[] = [];
+      const errors: string[] = [];
+
+      if (!courseTitle || courseTitle.trim() === "") {
+        missingFields.push("Course Title");
+      }
+
+      if (!courseCode || courseCode.trim() === "") {
+        missingFields.push("Course Code");
+      }
+
+      if (!instructor || instructor.trim() === "") {
+        missingFields.push("Instructor");
+      }
+
+      if (!room || room.trim() === "") {
+        missingFields.push("Room");
+      }
+
+      if (!startTime || startTime.trim() === "") {
+        missingFields.push("Start Time");
+      }
+
+      if (!endTime || endTime.trim() === "") {
+        missingFields.push("End Time");
+      }
+
+      if (!days || typeof days !== "object") {
+        missingFields.push("Days");
+      }
+
+      if (!semesterStartDate || semesterStartDate.trim() === "") {
+        missingFields.push("Semester Start Date");
+      }
+
+      if (!semesterEndDate || semesterEndDate.trim() === "") {
+        missingFields.push("Semester End Date");
+      }
+
+      if (!section || section.trim() === "") {
+        missingFields.push("Section");
+      }
+
+      // Return specific missing fields
+      if (missingFields.length > 0) {
         res.status(400).json({
-          message:
-            "Please provide all required fields including semester dates and days.",
+          message: `Please provide the following required fields: ${missingFields.join(", ")}`,
+          errors: missingFields.map(field => `${field} is required`),
+          missingFields,
         });
         return;
       }
 
+      // Validate days format
       const validDays = ["mon", "tue", "wed", "thu", "fri", "sat"];
       const isValidDays = validDays.every(
         (day) => typeof days[day] === "boolean"
       );
 
       if (!isValidDays) {
-        res.status(400).json({ message: "Invalid days format." });
+        res.status(400).json({ 
+          message: "Invalid days format. Days must be an object with boolean values for mon, tue, wed, thu, fri, sat.",
+          errors: ["Invalid days format"]
+        });
         return;
       }
 
-      // ✅ Convert semester dates to YYYY-MM-DD format
+      // Check if at least one day is selected
+      const hasSelectedDay = validDays.some((day) => days[day] === true);
+      if (!hasSelectedDay) {
+        res.status(400).json({
+          message: "Please select at least one day for the schedule.",
+          errors: ["At least one day must be selected"]
+        });
+        return;
+      }
+
+      // Validate time format and range
+      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(startTime)) {
+        res.status(400).json({
+          message: "Invalid Start Time format. Please use HH:MM format (e.g., 08:00).",
+          errors: ["Invalid Start Time format"]
+        });
+        return;
+      }
+
+      if (!timeRegex.test(endTime)) {
+        res.status(400).json({
+          message: "Invalid End Time format. Please use HH:MM format (e.g., 10:00).",
+          errors: ["Invalid End Time format"]
+        });
+        return;
+      }
+
+      // Validate that end time is after start time
+      const [startHour, startMin] = startTime.split(":").map(Number);
+      const [endHour, endMin] = endTime.split(":").map(Number);
+      const startMinutes = startHour * 60 + startMin;
+      const endMinutes = endHour * 60 + endMin;
+
+      if (endMinutes <= startMinutes) {
+        res.status(400).json({
+          message: "End Time must be after Start Time.",
+          errors: ["End Time must be after Start Time"]
+        });
+        return;
+      }
+
+      // ✅ Convert semester dates to YYYY-MM-DD format (accepts any valid date format)
       const formatDate = (date: string | Date) => {
         const d = new Date(date);
+        if (isNaN(d.getTime())) {
+          return null; // Invalid date
+        }
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
         return `${year}-${month}-${day}`;
       };
+
+      // Validate dates by trying to convert them
+      const formattedStartDate = formatDate(semesterStartDate);
+      const formattedEndDate = formatDate(semesterEndDate);
+
+      if (!formattedStartDate) {
+        res.status(400).json({
+          message: "Invalid Semester Start Date. Please provide a valid date.",
+          errors: ["Invalid Semester Start Date"]
+        });
+        return;
+      }
+
+      if (!formattedEndDate) {
+        res.status(400).json({
+          message: "Invalid Semester End Date. Please provide a valid date.",
+          errors: ["Invalid Semester End Date"]
+        });
+        return;
+      }
+
+      // Validate date range
+      const startDate = new Date(formattedStartDate);
+      const endDate = new Date(formattedEndDate);
+
+      if (endDate <= startDate) {
+        res.status(400).json({
+          message: "Semester End Date must be after Start Date.",
+          errors: ["Semester End Date must be after Start Date"]
+        });
+        return;
+      }
 
       // Use data service (works both online and offline)
       const newSchedule = await ScheduleService.create({
@@ -1289,8 +1447,8 @@ router.post(
         startTime,
         endTime,
         days,
-        semesterStartDate: formatDate(semesterStartDate),
-        semesterEndDate: formatDate(semesterEndDate),
+        semesterStartDate: formattedStartDate,
+        semesterEndDate: formattedEndDate,
         section,
       });
 
@@ -1302,9 +1460,30 @@ router.post(
         message: "Schedule created successfully.",
         schedule: newSchedule,
       });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: "Server error" });
+    } catch (error: any) {
+      console.error("[ERROR] Failed to create schedule:", error);
+      
+      // Provide more specific error messages
+      let errorMessage = "Failed to create schedule. Please try again.";
+      let statusCode = 500;
+
+      if (error.name === "ValidationError") {
+        // Mongoose validation error
+        const validationErrors = Object.values(error.errors || {}).map((err: any) => err.message);
+        errorMessage = `Validation error: ${validationErrors.join(", ")}`;
+        statusCode = 400;
+      } else if (error.code === 11000) {
+        // Duplicate key error
+        errorMessage = "A schedule with the same details already exists.";
+        statusCode = 409;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      res.status(statusCode).json({ 
+        message: errorMessage,
+        error: error.name || "ServerError"
+      });
     }
   }
 );

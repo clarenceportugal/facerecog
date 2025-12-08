@@ -183,23 +183,38 @@ return matchesDate && matchesRoom && matchesSearch && matchesCourse;
 
   return (
     <DeanMain>
-      <Box p={3}>
-        <Typography variant="h4" fontWeight="bold" gutterBottom>
-          Faculty Time In/Out Breakdown
-        </Typography>
-        <Typography variant="body2" color="text.secondary" mb={3}>
-          View detailed monthly records of time in, time out, and attendance status.
-        </Typography>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+            Faculty Time In/Out Breakdown
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            View detailed records of time in, time out, and attendance status for all faculty members
+          </Typography>
+        </Box>
 
-        {/* ✅ Course Dropdown */}
-{/* ✅ Course Dropdown + Search Bar in One Row */}
-<Grid
-  container
-  spacing={2}
-  alignItems="center"
-  justifyContent="center"
-  mb={3}
->
+        {/* Filters & Search Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Grid
+            container
+            spacing={2}
+            alignItems="center"
+          >
   {/* Course Dropdown */}
   <Grid item xs={12} md={4}>
     <FormControl
@@ -271,7 +286,8 @@ return matchesDate && matchesRoom && matchesSearch && matchesCourse;
       }}
     />
   </Grid>
-</Grid>
+          </Grid>
+        </Box>
 
         {/* ✅ Modern Modal for Advanced Filters */}
         <Dialog open={showAdvanced} onClose={() => setShowAdvanced(false)} maxWidth="sm" fullWidth>
@@ -380,12 +396,20 @@ return matchesDate && matchesRoom && matchesSearch && matchesCourse;
           </DialogActions>
         </Dialog>
 
-        {/* ✅ Table */}
-        <TableContainer component={Paper} elevation={4} sx={{ borderRadius: 3 }}>
+        {/* Table Section */}
+        <TableContainer
+          component={Paper}
+          sx={{
+            width: "100%",
+            borderRadius: 3,
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+            overflow: "hidden",
+          }}
+        >
           <Box sx={{ maxHeight: 500, overflow: "auto" }}>
-            <Table stickyHeader size="small">
+            <Table stickyHeader>
               <TableHead>
-                <TableRow>
+                <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
                   {[
                     "Date",
                     "Instructor Name",
@@ -401,11 +425,10 @@ return matchesDate && matchesRoom && matchesSearch && matchesCourse;
                       sx={{
                         position: "sticky",
                         top: 0,
-                        backgroundColor: "#f5f5f5",
+                        backgroundColor: "#f1f3f4",
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
                         color: "#333",
-                        fontWeight: "bold",
-                        fontSize: "0.9rem",
-                        textTransform: "uppercase",
                       }}
                     >
                       {header}
@@ -434,10 +457,13 @@ return matchesDate && matchesRoom && matchesSearch && matchesCourse;
                   paginatedLogs.map((log, index) => (
                     <TableRow
                       key={log._id}
-                      hover
                       sx={{
                         backgroundColor: index % 2 === 0 ? "#fafafa" : "white",
-                        "&:hover": { backgroundColor: "#f0f4ff" },
+                        transition: "background-color 0.2s ease",
+                        "&:hover": {
+                          backgroundColor: "#f0f4ff",
+                          transform: "scale(1.001)",
+                        },
                       }}
                     >
                       <TableCell>
@@ -507,9 +533,9 @@ return matchesDate && matchesRoom && matchesSearch && matchesCourse;
             }}
             rowsPerPageOptions={[5, 10, 25, 50]}
             sx={{
-              px: 2,
               borderTop: "1px solid #e0e0e0",
               backgroundColor: "#fafafa",
+              px: 2,
             }}
           />
         </TableContainer>

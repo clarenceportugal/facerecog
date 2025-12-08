@@ -654,10 +654,11 @@ let frameToClientTimestamps = new Map(); // frameNumber -> sent to client timest
 let totalFrameCaptureToClient = 0;
 let totalFramesToClient = 0;
       // ⚡ Frame skip rate: Lower = more frames processed (faster detection)
-      // GPU (GTX 3050 Ti): Use 2-3 for smooth detection without buffer overflow
+      // RTX 3050 Ti (4GB) + 32GB RAM + 60 FPS: Process every 2nd frame (2) for smooth 60 FPS without buffer overflow
+      // At 60 FPS, processing every frame (1) may cause buffer overflow, so 2 is optimal
       // CPU: Use 5 or higher to reduce load
       // Set via FRAME_SKIP_RATE environment variable
-      // Default: 2 for GPU mode = smooth detection without buffer overflow
+      // Default: 2 for RTX 3050 Ti at 60 FPS = process every 2nd frame (30 FPS detection rate, smooth stream)
       const FRAME_SKIP_RATE = parseInt(process.env.FRAME_SKIP_RATE) || 2;
 
 function sendFrameToPython(jpgBuffer, cameraId) {
@@ -1031,8 +1032,8 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
     '-reorder_queue_size', '0',   // Disable reorder buffer
     '-i', rtspUrl,
     '-f', 'mjpeg',
-    '-q:v', '5',                  // Lower quality for zero delay (5 = faster encoding)
-         '-vf', 'fps=20,scale=1920:1080',  // 20 FPS + Full HD (reduced from 30 for faster processing)
+    '-q:v', '4',                  // Balanced quality for 60 FPS (4 = good quality, still fast encoding)
+         '-vf', 'fps=60,scale=1920:1080',  // 60 FPS + Full HD (RTX 3050 Ti optimized for smooth 60 FPS)
     '-thread_queue_size', '1',    // Minimal queue for zero delay (was 512)
     '-vsync', '0',                // Passthrough timestamps (no sync delay)
     '-preset', 'ultrafast',       // Fastest encoding
@@ -1050,7 +1051,7 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
   let frontendFrameSkip = 0;  // Skip frames to frontend if WebSocket is slow
   const SOI = Buffer.from([0xFF, 0xD8]);
   const EOI = Buffer.from([0xFF, 0xD9]);
-  const MIN_FRAME_INTERVAL_MS = 33;  // 30 FPS (1000/30 = 33.3ms) for smooth real-time playback
+  const MIN_FRAME_INTERVAL_MS = 16;  // 60 FPS (1000/60 = 16.67ms) for smooth real-time playback
 
   if (!ws.cameras) ws.cameras = {};
   ws.cameras[cameraId] = {
@@ -1120,7 +1121,16 @@ function startFFmpegStream(ws, cameraId, rtspUrl, cameraName) {
             jpeg
           ], totalLen);
           
-          // ⚡ ZERO DELAY: Send immediately - no buffering checks for real-time streaming
+          // ⚡ 60 FPS OPTIMIZED: Check buffer only if very full (60 FPS needs more headroom)
+          // At 60 FPS, we need larger buffer threshold to prevent frame drops
+          if (ws.bufferedAmount > 3 * 1024 * 1024) {  // 3MB threshold for 60 FPS (was 2MB)
+            // Buffer is getting full - skip this frame to prevent lag
+            frontendFrameSkip++;
+            if (frontendFrameSkip % 2 === 0) {  // Skip every other frame if buffer is full
+              return;  // Skip this frame
+            }
+          }
+          
           ws.send(payload, { binary: true, compress: false });  // No compression for speed
           lastSentFrameTime = Date.now();
           frontendFrameSkip = 0;

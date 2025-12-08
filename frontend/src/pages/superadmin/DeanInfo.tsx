@@ -213,10 +213,17 @@ const DeanInfo: React.FC = () => {
     }
   };
 
-  const generateUsername = (firstName: string, lastName: string) => {
-    const first = firstName.substring(0, 3).toUpperCase();
-    const last = lastName.substring(0, 3).toUpperCase();
-    return last + first;
+  const generateUsername = (firstName: string, lastName: string, middleName?: string) => {
+    // Different construction: first initial + last name (up to 5 chars) + first name (up to 3 chars)
+    const firstInitial = firstName.charAt(0).toUpperCase();
+    const lastPart = lastName.substring(0, Math.min(5, lastName.length)).toUpperCase();
+    const firstPart = firstName.substring(0, Math.min(3, firstName.length)).toUpperCase();
+    const middle = middleName ? middleName.charAt(0).toUpperCase() : '';
+    
+    if (middle) {
+      return firstInitial + lastPart + middle + firstPart;
+    }
+    return firstInitial + lastPart + firstPart;
   };
 
   useEffect(() => {
@@ -224,7 +231,8 @@ const DeanInfo: React.FC = () => {
       if (newFaculty.first_name && newFaculty.last_name) {
         const username = generateUsername(
           newFaculty.first_name,
-          newFaculty.last_name
+          newFaculty.last_name,
+          newFaculty.middle_name
         );
         setNewFaculty((prev) => ({ ...prev, username }));
       }

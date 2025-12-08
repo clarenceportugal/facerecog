@@ -180,9 +180,9 @@ router.post(
   "/dean-generate-monthly-department-logs",
   async (req: Request, res: Response) => {
     try {
-      const { courseCode, selectedMonth, selectedYear } = req.body;
+      const { courseCode, startDate, endDate } = req.body;
 
-      console.log(`[REPORT] Generating dean report for courseCode: "${courseCode}", Month: ${selectedMonth}, Year: ${selectedYear}`);
+      console.log(`[REPORT] Generating dean report for courseCode: "${courseCode}", StartDate: ${startDate}, EndDate: ${endDate}`);
 
       // Use data service (works both online and offline)
       let allLogs = await LogService.findAll();
@@ -211,7 +211,7 @@ router.post(
 
       console.log(`[REPORT] Fetched ${logs.length} total logs from database`);
 
-      // 🔹 Filter logs by month and year before grouping, and filter out logs with null schedules
+      // 🔹 Filter logs by date range before grouping, and filter out logs with null schedules
       const filteredLogs = logs.filter((log: any) => {
         // Filter out logs with null/undefined schedules
         if (!log.schedule || log.schedule === null || log.schedule === undefined) {
@@ -220,17 +220,33 @@ router.post(
         
         if (!log.date) return false;
         const logDate = new Date(log.date);
-        const logYear = logDate.getFullYear();
-        const logMonth = logDate.getMonth() + 1; // 0-indexed in JS
+        logDate.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
 
-        const matchesYear = selectedYear
-          ? logYear === Number(selectedYear)
+        // If no date range specified, include all logs
+        if (!startDate && !endDate) {
+          return true;
+        }
+
+        // Check if log date is within range (including time)
+        // Parse the date string - could be YYYY-MM-DD or YYYY-MM-DD HH:mm:ss
+        const parseDate = (dateStr: string) => {
+          if (dateStr.includes(' ')) {
+            // Has time: YYYY-MM-DD HH:mm:ss
+            return new Date(dateStr.replace(' ', 'T'));
+          } else {
+            // No time: YYYY-MM-DD
+            return new Date(dateStr + 'T00:00:00');
+          }
+        };
+        
+        const afterStart = startDate 
+          ? logDate >= parseDate(startDate)
           : true;
-        const matchesMonth = selectedMonth
-          ? logMonth === Number(selectedMonth)
+        const beforeEnd = endDate 
+          ? logDate <= parseDate(endDate)
           : true;
 
-        return matchesYear && matchesMonth;
+        return afterStart && beforeEnd;
       });
 
       console.log(`[REPORT] Filtered ${filteredLogs.length} logs for report generation`);
@@ -308,14 +324,28 @@ router.post(
       }
 
       // 🔹 Report metadata — based on selected filters
-      const reportMonth = selectedMonth
-        ? new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
-            month: "long",
-          })
-        : "All Months";
-
-      const reportYear = selectedYear || "All Years";
-      const reportDate = `${reportMonth} ${reportYear}`;
+      // Format report date range (including time)
+      const formatDateTime = (dateStr: string) => {
+        const date = dateStr.includes(' ') 
+          ? new Date(dateStr.replace(' ', 'T'))
+          : new Date(dateStr + 'T00:00:00');
+        return date.toLocaleString('en-US', { 
+          month: 'long', 
+          day: 'numeric', 
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      };
+      
+      let reportDate = "All Dates";
+      if (startDate && endDate) {
+        reportDate = `${formatDateTime(startDate)} - ${formatDateTime(endDate)}`;
+      } else if (startDate) {
+        reportDate = `From ${formatDateTime(startDate)}`;
+      } else if (endDate) {
+        reportDate = `Until ${formatDateTime(endDate)}`;
+      }
 
       // 🔹 Load DOCX template
       const templatePath = path.join(

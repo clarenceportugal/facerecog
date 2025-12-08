@@ -12,15 +12,16 @@ import {
   TablePagination,
   TableRow,
   Chip,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Dialog,
   CircularProgress,
   TextField,
   InputAdornment,
+  Grid,
 } from "@mui/material";
+import { LocalizationProvider } from "@mui/x-date-pickers";
+import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
+import dayjs, { Dayjs } from "dayjs";
 import SearchIcon from "@mui/icons-material/Search";
 import AdminMain from "./AdminMain";
 import axios from "axios";
@@ -76,9 +77,12 @@ const FacultyReports: React.FC = React.memo(() => {
   const [selectedInstructor, setSelectedInstructor] = useState("");
 
   // 🔹 Filters
-  const [selectedYear, setSelectedYear] = useState<string>("");
-  const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  
+  // Extract start and end dates
+  const startDate = dateRange[0];
+  const endDate = dateRange[1];
 
   const handleChangePage = (_: unknown, newPage: number) => setPage(newPage);
   const handleChangeRowsPerPage = (
@@ -119,7 +123,7 @@ const FacultyReports: React.FC = React.memo(() => {
     };
   }, [CourseName]);
 
-  // 🔹 Filter logs by month/year - memoized for performance
+  // 🔹 Filter logs by date range - memoized for performance
   const filteredLogs = useMemo(() => {
     return allLogs.filter((log) => {
       // Filter out logs with null/undefined schedules
@@ -127,16 +131,20 @@ const FacultyReports: React.FC = React.memo(() => {
         return false;
       }
       
-      const logDate = new Date(log.date);
-      const year = logDate.getFullYear().toString();
-      const month = (logDate.getMonth() + 1).toString().padStart(2, "0");
-
-      const matchesYear = selectedYear ? year === selectedYear : true;
-      const matchesMonth = selectedMonth ? month === selectedMonth : true;
-
-      return matchesYear && matchesMonth;
+      const logDate = dayjs(log.date);
+      
+      // If no date range selected, show all logs
+      if (!startDate && !endDate) {
+        return true;
+      }
+      
+      // Check if log date is within range (including time)
+      const afterStart = startDate ? logDate.isSameOrAfter(startDate) : true;
+      const beforeEnd = endDate ? logDate.isSameOrBefore(endDate) : true;
+      
+      return afterStart && beforeEnd;
     });
-  }, [allLogs, selectedYear, selectedMonth]);
+  }, [allLogs, startDate, endDate]);
 
   // 🔹 Group filtered logs - memoized for performance
   const rows = useMemo(() => {
@@ -233,13 +241,6 @@ const FacultyReports: React.FC = React.memo(() => {
     setOpenDetails(true);
   }, [filteredLogs]);
 
-  // 🔹 Unique years from logs - memoized for performance
-  const uniqueYears = useMemo(() => {
-    return Array.from(
-      new Set(allLogs.map((log) => new Date(log.date).getFullYear().toString()))
-    );
-  }, [allLogs]);
-
   // 🔹 Generate Report
   const handleGenerateReport = async () => {
     try {
@@ -254,8 +255,8 @@ const FacultyReports: React.FC = React.memo(() => {
         "http://localhost:5000/api/auth/generate-monthly-department-logs",
         {
           CourseName,
-          selectedYear: selectedYear || null,
-          selectedMonth: selectedMonth || null,
+          startDate: startDate ? startDate.format('YYYY-MM-DD HH:mm:ss') : null,
+          endDate: endDate ? endDate.format('YYYY-MM-DD HH:mm:ss') : null,
           searchQuery: searchQuery.trim() || null, // Send faculty name filter
         },
         { 
@@ -293,17 +294,18 @@ const FacultyReports: React.FC = React.memo(() => {
 
       // Response is blob (success)
       const CollegeName = localStorage.getItem("college") ?? "College";
-      const yearLabel = selectedYear ? `_${selectedYear}` : "";
-      const monthLabel = selectedMonth
-        ? `_${new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
-            month: "long",
-          })}`
+      const dateLabel = startDate && endDate 
+        ? `_${startDate.format('YYYY-MM-DD_HH-mm')}_to_${endDate.format('YYYY-MM-DD_HH-mm')}`
+        : startDate 
+        ? `_from_${startDate.format('YYYY-MM-DD_HH-mm')}`
+        : endDate
+        ? `_to_${endDate.format('YYYY-MM-DD_HH-mm')}`
         : "";
 
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${CollegeName}_AttendanceReport${yearLabel}${monthLabel}.docx`;
+      a.download = `${CollegeName}_AttendanceReport${dateLabel}.docx`;
       a.click();
       window.URL.revokeObjectURL(url);
 
@@ -348,91 +350,137 @@ const FacultyReports: React.FC = React.memo(() => {
   };
 
   return (
-    <AdminMain>
-      <Box display="flex" flexDirection="column" gap={3}>
-        {/* Header */}
-        <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Box>
-            <Typography variant="h4" fontWeight={700}>
-              📊 Faculty Attendance Report
-            </Typography>
-            <Typography variant="body2" color="text.secondary" mt={1}>
-              Attendance summary of faculty members (filtered by month/year)
-            </Typography>
-          </Box>
-
-          {/* 🔹 Year and Month Filters at top-right */}
-          <Box display="flex" alignItems="center" gap={2}>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <InputLabel>Year</InputLabel>
-              <Select
-                value={selectedYear}
-                label="Year"
-                onChange={(e) => setSelectedYear(e.target.value)}
-              >
-                <MenuItem value="">All</MenuItem>
-                {uniqueYears.map((year) => (
-                  <MenuItem key={year} value={year}>
-                    {year}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel>Month</InputLabel>
-              <Select
-                value={selectedMonth}
-                label="Month"
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              >
-                <MenuItem value="">All</MenuItem>
-                {Array.from({ length: 12 }, (_, i) => {
-                  const monthNum = (i + 1).toString().padStart(2, "0");
-                  const monthName = new Date(0, i).toLocaleString("en-US", {
-                    month: "long",
-                  });
-                  return (
-                    <MenuItem key={monthNum} value={monthNum}>
-                      {monthName}
-                    </MenuItem>
-                  );
-                })}
-              </Select>
-            </FormControl>
-          </Box>
+    <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <AdminMain>
+        <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+            📊 Faculty Attendance Report
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Attendance summary of faculty members (filtered by date and time range)
+          </Typography>
         </Box>
 
-        {/* Search Bar */}
-        <Box display="flex" justifyContent="flex-end">
-          <TextField
-            size="small"
-            placeholder="Search by instructor name..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setPage(0); // Reset to first page when searching
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon color="action" />
-                </InputAdornment>
-              ),
-            }}
-            sx={{
-              minWidth: 300,
-              backgroundColor: "#fff",
-              borderRadius: 2,
-              "& .MuiOutlinedInput-root": {
-                borderRadius: 2,
-              },
-            }}
-          />
+        {/* 🔹 Filters & Search - Combined Section */}
+        <Box 
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Grid container spacing={2} alignItems="center">
+            {/* Search Bar - First */}
+            <Grid item xs={12} md={4}>
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Search by instructor name..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setPage(0); // Reset to first page when searching
+                }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon color="action" />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                  },
+                }}
+              />
+            </Grid>
+
+            {/* Date & Time Range Pickers - After Search */}
+            <Grid item xs={12} md={8}>
+              <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" justifyContent="flex-end">
+                <Typography variant="body1" fontWeight={600} color="#333" sx={{ minWidth: "fit-content" }}>
+                  Filter by Date & Time:
+                </Typography>
+                <DateTimePicker
+                  label="Start Date & Time"
+                  value={startDate}
+                  onChange={(newValue) => setDateRange([newValue, endDate])}
+                  maxDateTime={endDate || undefined}
+                  slotProps={{
+                    textField: {
+                      size: 'small',
+                      sx: {
+                        minWidth: 220,
+                        backgroundColor: "#f8f9fa",
+                        "& .MuiOutlinedInput-root": {
+                          borderRadius: 2,
+                        },
+                      },
+                    },
+                  }}
+                />
+                <Typography variant="body2" color="text.secondary" fontWeight={500}>
+                  to
+                </Typography>
+                <DateTimePicker
+                  label="End Date & Time"
+                  value={endDate}
+                  onChange={(newValue) => setDateRange([startDate, newValue])}
+                  minDateTime={startDate || undefined}
+                  slotProps={{
+                    textField: {
+                      size: 'small',
+                      sx: {
+                        minWidth: 220,
+                        backgroundColor: "#f8f9fa",
+                        "& .MuiOutlinedInput-root": {
+                          borderRadius: 2,
+                        },
+                      },
+                    },
+                  }}
+                />
+                {(startDate || endDate) && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setDateRange([null, null])}
+                    sx={{ 
+                      textTransform: "none",
+                      borderRadius: 2,
+                      px: 2,
+                    }}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </Box>
+            </Grid>
+          </Grid>
         </Box>
 
         {/* Table */}
-        <Paper elevation={4} sx={{ borderRadius: 3, overflow: "hidden" }}>
+        <Paper 
+          elevation={4} 
+          sx={{ 
+            borderRadius: 3, 
+            overflow: "hidden",
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+          }}
+        >
           <TableContainer sx={{ maxHeight: 500 }}>
             <Table stickyHeader>
               <TableHead>
@@ -444,8 +492,8 @@ const FacultyReports: React.FC = React.memo(() => {
                       sx={{
                         backgroundColor: "#f1f3f4",
                         color: "#333",
-                        fontWeight: "bold",
-                        fontSize: 14,
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
                       }}
                     >
                       {column.label}
@@ -480,6 +528,7 @@ const FacultyReports: React.FC = React.memo(() => {
                         sx={{
                           cursor: "pointer",
                           backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
+                          transition: "background-color 0.2s ease",
                           "&:hover": { backgroundColor: "#f0f4ff" },
                         }}
                       >
@@ -521,23 +570,39 @@ const FacultyReports: React.FC = React.memo(() => {
             page={page}
             onPageChange={handleChangePage}
             onRowsPerPageChange={handleChangeRowsPerPage}
+            sx={{
+              borderTop: "1px solid #e0e0e0",
+              backgroundColor: "#fafafa",
+            }}
           />
         </Paper>
 
         {/* Download button */}
-        <Box display="flex" justifyContent="flex-end">
+        <Box 
+          display="flex" 
+          justifyContent="flex-end"
+          sx={{
+            p: 2,
+            backgroundColor: "#fff",
+            borderRadius: 2,
+            boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.05)",
+          }}
+        >
           <Button
             variant="contained"
             onClick={handleGenerateReport}
             sx={{
-              px: 3,
+              px: 4,
               py: 1.5,
               borderRadius: 3,
               textTransform: "none",
               fontWeight: 600,
+              fontSize: "0.9375rem",
               background: "linear-gradient(45deg, #660708, #BA181B)",
+              boxShadow: "0px 4px 12px rgba(102, 7, 8, 0.3)",
               ":hover": {
                 background: "linear-gradient(45deg, #BA181B, #E5383B)",
+                boxShadow: "0px 6px 16px rgba(102, 7, 8, 0.4)",
               },
             }}
           >
@@ -668,6 +733,7 @@ const FacultyReports: React.FC = React.memo(() => {
         </Dialog>
       </Box>
     </AdminMain>
+    </LocalizationProvider>
   );
 });
 

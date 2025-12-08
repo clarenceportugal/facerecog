@@ -19,6 +19,7 @@ import {
   IconButton,
   DialogTitle,
   TablePagination,
+  Button,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 
@@ -178,22 +179,37 @@ const PendingFaculty: React.FC = () => {
 
   return (
     <AdminMain>
-      <Box>
-        <Typography variant="h4" fontWeight="bold" color="#333" gutterBottom>
-          Pending Faculty {CourseName && `- ${CourseName.toUpperCase()}`}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" mb={2}>
-          <span style={{ fontWeight: 400 }}>
-            List of faculty members whose registration or approval is still
-            pending.
-          </span>
-        </Typography>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+            Pending Faculty {CourseName && `- ${CourseName.toUpperCase()}`}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Review and approve faculty members whose registration is pending approval
+          </Typography>
+        </Box>
 
-        <TableContainer component={Paper} elevation={3}>
+        {/* Table Section */}
+        <TableContainer 
+          component={Paper} 
+          sx={{
+            borderRadius: 3,
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+            overflow: "hidden",
+          }}
+        >
           <Box sx={{ maxHeight: 500, overflow: "auto" }}>
             <Table stickyHeader>
-              <TableHead sx={{ backgroundColor: "#f5f5f5" }}>
-                <TableRow>
+              <TableHead>
+                <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
                   {[
                     "Profile",
                     "Email",
@@ -208,9 +224,11 @@ const PendingFaculty: React.FC = () => {
                       sx={{
                         position: "sticky",
                         top: 0,
-                        backgroundColor: "#f5f5f5",
+                        backgroundColor: "#f1f3f4",
                         zIndex: 1,
-                        fontWeight: "bold",
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
+                        color: "#333",
                       }}
                       align={header === "Actions" ? "center" : "left"}
                     >
@@ -237,8 +255,15 @@ const PendingFaculty: React.FC = () => {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedFacultyList.map((faculty) => (
-                    <TableRow key={faculty._id} hover>
+                  paginatedFacultyList.map((faculty, idx) => (
+                    <TableRow 
+                      key={faculty._id} 
+                      sx={{
+                        backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
+                        "&:hover": { backgroundColor: "#f0f4ff" },
+                        transition: "background-color 0.2s ease",
+                      }}
+                    >
                       <TableCell>
                         <Avatar
                           src={faculty.profilePhoto}
@@ -275,52 +300,44 @@ const PendingFaculty: React.FC = () => {
                           : "N/A"}
                       </TableCell>
                       <TableCell align="center">
-                        <Box display="flex" justifyContent="center" gap={1}>
-                          <button
-                            style={{
-                              backgroundColor:
-                                hoveredBtn === `accept-${faculty._id}`
-                                  ? "#45a049"
-                                  : "#4CAF50",
-                              color: "#fff",
-                              border: "none",
-                              borderRadius: 6,
-                              padding: "6px 12px",
-                              fontWeight: 500,
-                              cursor: "pointer",
-                              transition: "background-color 0.2s ease",
-                            }}
-                            onMouseEnter={() =>
-                              setHoveredBtn(`accept-${faculty._id}`)
-                            }
-                            onMouseLeave={() => setHoveredBtn(null)}
+                        <Box display="flex" justifyContent="center" gap={1.5}>
+                          <Button
+                            variant="contained"
+                            color="success"
+                            size="small"
                             onClick={() => handleAccept(faculty._id)}
+                            sx={{
+                              textTransform: "none",
+                              borderRadius: 2,
+                              px: 2,
+                              fontWeight: 600,
+                              boxShadow: "0px 2px 4px rgba(76, 175, 80, 0.3)",
+                              "&:hover": {
+                                boxShadow: "0px 4px 8px rgba(76, 175, 80, 0.4)",
+                              },
+                            }}
                           >
                             Accept
-                          </button>
+                          </Button>
 
-                          <button
-                            style={{
-                              backgroundColor:
-                                hoveredBtn === `reject-${faculty._id}`
-                                  ? "#c62828"
-                                  : "#f44336",
-                              color: "#fff",
-                              border: "none",
-                              borderRadius: 6,
-                              padding: "6px 12px",
-                              fontWeight: 500,
-                              cursor: "pointer",
-                              transition: "background-color 0.2s ease",
-                            }}
-                            onMouseEnter={() =>
-                              setHoveredBtn(`reject-${faculty._id}`)
-                            }
-                            onMouseLeave={() => setHoveredBtn(null)}
+                          <Button
+                            variant="contained"
+                            color="error"
+                            size="small"
                             onClick={() => handleReject(faculty._id)}
+                            sx={{
+                              textTransform: "none",
+                              borderRadius: 2,
+                              px: 2,
+                              fontWeight: 600,
+                              boxShadow: "0px 2px 4px rgba(244, 67, 54, 0.3)",
+                              "&:hover": {
+                                boxShadow: "0px 4px 8px rgba(244, 67, 54, 0.4)",
+                              },
+                            }}
                           >
                             Reject
-                          </button>
+                          </Button>
                         </Box>
                       </TableCell>
                     </TableRow>
@@ -342,7 +359,11 @@ const PendingFaculty: React.FC = () => {
               setPage(0);
             }}
             rowsPerPageOptions={[5, 10, 25, 50]}
-            sx={{ px: 2 }}
+            sx={{
+              borderTop: "1px solid #e0e0e0",
+              backgroundColor: "#fafafa",
+              px: 2,
+            }}
           />
         </TableContainer>
 

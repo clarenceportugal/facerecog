@@ -20,6 +20,10 @@ import {
   Dialog,
   CircularProgress,
 } from "@mui/material";
+import { LocalizationProvider } from "@mui/x-date-pickers";
+import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
+import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
+import dayjs, { Dayjs } from "dayjs";
 import DeanMain from "./DeanMain";
 import axios from "axios";
 import Swal from "sweetalert2";
@@ -74,8 +78,11 @@ const DeanFacultyReports: React.FC = React.memo(() => {
   // 🔹 Filters
   const [courses, setCourses] = useState<any[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<string>("");
-  const [selectedYear, setSelectedYear] = useState<string>("");
-  const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
+  
+  // Extract start and end dates
+  const startDate = dateRange[0];
+  const endDate = dateRange[1];
 
   const handleChangePage = (_: unknown, newPage: number) => setPage(newPage);
   const handleChangeRowsPerPage = (
@@ -142,7 +149,7 @@ const DeanFacultyReports: React.FC = React.memo(() => {
     fetchCourses();
   }, []);
 
-  // 🔹 Filter logs by month/year - memoized for performance
+  // 🔹 Filter logs by date range - memoized for performance
   const filteredLogs = useMemo(() => {
     return allLogs.filter((log) => {
       // Filter out logs with null/undefined schedules
@@ -150,16 +157,20 @@ const DeanFacultyReports: React.FC = React.memo(() => {
         return false;
       }
       
-      const logDate = new Date(log.date);
-      const year = logDate.getFullYear().toString();
-      const month = (logDate.getMonth() + 1).toString().padStart(2, "0");
-
-      const matchesYear = selectedYear ? year === selectedYear : true;
-      const matchesMonth = selectedMonth ? month === selectedMonth : true;
-
-      return matchesYear && matchesMonth;
+      const logDate = dayjs(log.date);
+      
+      // If no date range selected, show all logs
+      if (!startDate && !endDate) {
+        return true;
+      }
+      
+      // Check if log date is within range (including time)
+      const afterStart = startDate ? logDate.isSameOrAfter(startDate) : true;
+      const beforeEnd = endDate ? logDate.isSameOrBefore(endDate) : true;
+      
+      return afterStart && beforeEnd;
     });
-  }, [allLogs, selectedYear, selectedMonth]);
+  }, [allLogs, startDate, endDate]);
 
   // 🔹 Group filtered logs - memoized for performance
   const rows = useMemo(() => {
@@ -251,12 +262,6 @@ const DeanFacultyReports: React.FC = React.memo(() => {
     [filteredLogs]
   );
 
-  // 🔹 Unique years from logs - memoized for performance
-  const uniqueYears = useMemo(() => {
-    return Array.from(
-      new Set(allLogs.map((log) => new Date(log.date).getFullYear().toString()))
-    );
-  }, [allLogs]);
 
   // 🔹 Generate Report
   const handleGenerateReport = async () => {
@@ -281,8 +286,8 @@ const DeanFacultyReports: React.FC = React.memo(() => {
         "http://localhost:5000/api/auth/dean-generate-monthly-department-logs",
         {
           courseCode: selectedCourse, // ✅ Send selected course
-          selectedYear: selectedYear || null,
-          selectedMonth: selectedMonth || null,
+          startDate: startDate ? startDate.format('YYYY-MM-DD HH:mm:ss') : null,
+          endDate: endDate ? endDate.format('YYYY-MM-DD HH:mm:ss') : null,
         },
         { 
           responseType: "blob",
@@ -320,17 +325,18 @@ const DeanFacultyReports: React.FC = React.memo(() => {
       // Response is blob (success)
       // 🧾 Use course code and selected filters in the filename
       const courseLabel = selectedCourse || "Course";
-      const yearLabel = selectedYear ? `_${selectedYear}` : "";
-      const monthLabel = selectedMonth
-        ? `_${new Date(0, Number(selectedMonth) - 1).toLocaleString("en-US", {
-            month: "long",
-          })}`
+      const dateLabel = startDate && endDate 
+        ? `_${startDate.format('YYYY-MM-DD_HH-mm')}_to_${endDate.format('YYYY-MM-DD_HH-mm')}`
+        : startDate 
+        ? `_from_${startDate.format('YYYY-MM-DD_HH-mm')}`
+        : endDate
+        ? `_to_${endDate.format('YYYY-MM-DD_HH-mm')}`
         : "";
 
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${courseLabel}_AttendanceReport${yearLabel}${monthLabel}.docx`;
+      a.download = `${courseLabel}_AttendanceReport${dateLabel}.docx`;
       a.click();
       window.URL.revokeObjectURL(url);
 
@@ -375,21 +381,39 @@ const DeanFacultyReports: React.FC = React.memo(() => {
   };
 
   return (
-    <DeanMain>
-      <Box display="flex" flexDirection="column" gap={3}>
-        {/* Header */}
-        <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Box>
-            <Typography variant="h4" fontWeight={700}>
+    <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <DeanMain>
+        <Box display="flex" flexDirection="column" gap={3}>
+          {/* Header Section */}
+          <Box
+            sx={{
+              p: 3,
+              backgroundColor: "#fff",
+              borderRadius: 3,
+              boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+            }}
+          >
+            <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
               📊 Faculty Monthly Report
             </Typography>
-            <Typography variant="body2" color="text.secondary" mt={1}>
-              Attendance summary of faculty members (filtered by month/year)
+            <Typography variant="body2" color="text.secondary">
+              Attendance summary of faculty members (filtered by date and time range)
             </Typography>
           </Box>
 
-          {/* 🔹 Year and Month Filters at top-right */}
-          <Box display="flex" alignItems="center" gap={2}>
+          {/* 🔹 Course and Date Range Picker Filters - Separate Section */}
+          <Box 
+            display="flex" 
+            alignItems="center" 
+            gap={2}
+            flexWrap="wrap"
+            sx={{
+              p: 3,
+              backgroundColor: "#fff",
+              borderRadius: 3,
+              boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+            }}
+          >
             <FormControl size="small" sx={{ minWidth: 160 }}>
               <InputLabel>Course</InputLabel>
               <Select
@@ -398,9 +422,15 @@ const DeanFacultyReports: React.FC = React.memo(() => {
                 onChange={(e) => {
                   const selected = e.target.value;
                   setSelectedCourse(selected);
-                  console.log("📘 Selected Course:", selected); // ✅ Log selected course
+                  console.log("📘 Selected Course:", selected);
                 }}
                 renderValue={(selected) => selected || "All"}
+                sx={{
+                  backgroundColor: "#f8f9fa",
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                  },
+                }}
               >
                 {courses.map((course) => (
                   <MenuItem key={course._id} value={course.code}>
@@ -410,45 +440,63 @@ const DeanFacultyReports: React.FC = React.memo(() => {
               </Select>
             </FormControl>
 
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <InputLabel>Year</InputLabel>
-              <Select
-                value={selectedYear}
-                label="Year"
-                onChange={(e) => setSelectedYear(e.target.value)}
+            <Typography variant="body1" fontWeight={600} color="#333" sx={{ ml: 1 }}>
+              Filter by Date & Time:
+            </Typography>
+            <DateTimePicker
+              label="Start Date & Time"
+              value={startDate}
+              onChange={(newValue) => setDateRange([newValue, endDate])}
+              maxDateTime={endDate || undefined}
+              slotProps={{
+                textField: {
+                  size: 'small',
+                  sx: {
+                    minWidth: 220,
+                    backgroundColor: "#f8f9fa",
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: 2,
+                    },
+                  },
+                },
+              }}
+            />
+            <Typography variant="body2" color="text.secondary" fontWeight={500}>
+              to
+            </Typography>
+            <DateTimePicker
+              label="End Date & Time"
+              value={endDate}
+              onChange={(newValue) => setDateRange([startDate, newValue])}
+              minDateTime={startDate || undefined}
+              slotProps={{
+                textField: {
+                  size: 'small',
+                  sx: {
+                    minWidth: 220,
+                    backgroundColor: "#f8f9fa",
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: 2,
+                    },
+                  },
+                },
+              }}
+            />
+            {(startDate || endDate) && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setDateRange([null, null])}
+                sx={{ 
+                  textTransform: "none",
+                  borderRadius: 2,
+                  px: 2,
+                }}
               >
-                <MenuItem value="">All</MenuItem>
-                {uniqueYears.map((year) => (
-                  <MenuItem key={year} value={year}>
-                    {year}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel>Month</InputLabel>
-              <Select
-                value={selectedMonth}
-                label="Month"
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              >
-                <MenuItem value="">All</MenuItem>
-                {Array.from({ length: 12 }, (_, i) => {
-                  const monthNum = (i + 1).toString().padStart(2, "0");
-                  const monthName = new Date(0, i).toLocaleString("en-US", {
-                    month: "long",
-                  });
-                  return (
-                    <MenuItem key={monthNum} value={monthNum}>
-                      {monthName}
-                    </MenuItem>
-                  );
-                })}
-              </Select>
-            </FormControl>
+                Clear
+              </Button>
+            )}
           </Box>
-        </Box>
 
         {/* Table */}
         <Paper elevation={4} sx={{ borderRadius: 3, overflow: "hidden" }}>
@@ -713,6 +761,7 @@ const DeanFacultyReports: React.FC = React.memo(() => {
         </Dialog>
       </Box>
     </DeanMain>
+    </LocalizationProvider>
   );
 });
 

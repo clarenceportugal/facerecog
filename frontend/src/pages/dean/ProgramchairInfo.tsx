@@ -34,6 +34,7 @@ import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
+import SearchIcon from "@mui/icons-material/Search";
 import Swal from "sweetalert2";
 import { useFacultyContext } from "../../context/FacultyContext";
 import BlockIcon from "@mui/icons-material/Block";
@@ -383,10 +384,20 @@ const ProgramchairInfo: React.FC = () => {
     }
   };
 
-  const generateUsername = (firstName: string, lastName: string) => {
-    const first = firstName.substring(0, 3).toUpperCase();
-    const last = lastName.substring(0, 3).toUpperCase();
-    return last + first;
+  const generateUsername = (firstName: string, lastName: string, middleName?: string) => {
+    // Different construction: first initial + last name (up to 5 chars) + first name (up to 3 chars)
+    // Example: "John" "Abejero" -> "JABEJJO" or "JABEJOHN"
+    const firstInitial = firstName.charAt(0).toUpperCase();
+    const lastPart = lastName.substring(0, Math.min(5, lastName.length)).toUpperCase();
+    const firstPart = firstName.substring(0, Math.min(3, firstName.length)).toUpperCase();
+    const middle = middleName ? middleName.charAt(0).toUpperCase() : '';
+    
+    if (middle) {
+      // First initial + last (5 chars) + middle initial + first (3 chars)
+      return firstInitial + lastPart + middle + firstPart;
+    }
+    // First initial + last (5 chars) + first (3 chars)
+    return firstInitial + lastPart + firstPart;
   };
 
   useEffect(() => {
@@ -405,250 +416,313 @@ const ProgramchairInfo: React.FC = () => {
 
   return (
     <DeanMain>
-      <Box
-        display="flex"
-        alignItems="center"
-        justifyContent="space-between"
-        sx={{ mb: 2 }}
-      >
-        <Box mb={3}>
-          <Typography variant="h4" fontWeight="bold" color="#333" gutterBottom>
-            {collegeCode
-              ? `${collegeCode} Staff Information`
-              : "Faculty Information"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mt={0.5}>
-            This section provides detailed information about the program
-            chairperson/s and instructor/s inside {collegeCode}.
-          </Typography>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          display="flex"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Box>
+            <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+              {collegeCode
+                ? `${collegeCode} Staff Information`
+                : "Faculty Information"}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Manage and view detailed information about staff members
+              {collegeCode && ` in the ${collegeCode} college`}
+            </Typography>
+          </Box>
+
+          <Box display="flex" alignItems="center" gap={2}>
+            <TextField
+              variant="outlined"
+              placeholder="Search by name, email, or username..."
+              size="small"
+              value={searchQuery}
+              onChange={handleSearch}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon color="action" />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                width: "320px",
+                backgroundColor: "#f8f9fa",
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2,
+                },
+              }}
+            />
+
+            <IconButton
+              color="primary"
+              onClick={handleOpenModal}
+              sx={{
+                backgroundColor: "primary.main",
+                color: "#fff",
+                "&:hover": {
+                  backgroundColor: "primary.dark",
+                },
+                borderRadius: 2,
+                p: 1.5,
+                boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.1)",
+              }}
+            >
+              <AddIcon />
+            </IconButton>
+          </Box>
         </Box>
-        <TextField
-          variant="outlined"
-          placeholder="Search faculty..."
-          size="small"
-          sx={{ mx: 2, width: "250px" }}
-          value={searchQuery}
-          onChange={handleSearch}
-        />
-        <IconButton color="primary" onClick={handleOpenModal}>
-          <AddIcon />
-        </IconButton>
-      </Box>
 
-      <Grid container spacing={2}>
-        <Grid item xs={12}>
-          <Paper
-            sx={{
-              width: "100%",
-              overflow: "hidden",
-              borderRadius: 3,
-              boxShadow: 4,
-            }}
-          >
-            <TableContainer>
-              <Table size="small">
-                <TableHead sx={{ backgroundColor: "#f5f5f5" }}>
-                  <TableRow>
-                    <TableCell>
-                      <strong>Full Name</strong>
-                    </TableCell>
-                    <TableCell>
-                      <strong>Email</strong>
-                    </TableCell>
-                    <TableCell>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <strong>Position</strong>
-                        <IconButton onClick={handleRoleClick} size="small">
-                          <ArrowDropDownIcon fontSize="small" />
-                        </IconButton>
-                        <Menu
-                          anchorEl={roleAnchorEl}
-                          open={roleMenuOpen}
-                          onClose={handleRoleClose}
-                        >
-                          <MenuItem onClick={() => handleRoleSelect("all")}>
-                            All
-                          </MenuItem>
-                          <MenuItem
-                            onClick={() =>
-                              handleRoleSelect("programchairperson")
-                            }
-                          >
-                            Program Chairperson
-                          </MenuItem>
-                          <MenuItem
-                            onClick={() => handleRoleSelect("instructor")}
-                          >
-                            Instructor
-                          </MenuItem>
-                        </Menu>
-                      </Box>
-                    </TableCell>
+        {/* Table Section */}
+        <TableContainer
+          component={Paper}
+          sx={{
+            width: "100%",
+            borderRadius: 3,
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+            overflow: "hidden",
+          }}
+        >
+          <Table>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                  Full Name
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                  Email
+                </TableCell>
+                <TableCell>
+                  <Box
+                    display="flex"
+                    alignItems="center"
+                    sx={{ cursor: "pointer", fontWeight: 700, fontSize: "0.875rem", color: "#333" }}
+                    onClick={handleRoleClick}
+                  >
+                    Position
+                    <IconButton size="small" sx={{ ml: 0.5, p: 0 }}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                  <Menu
+                    anchorEl={roleAnchorEl}
+                    open={roleMenuOpen}
+                    onClose={handleRoleClose}
+                  >
+                    <MenuItem onClick={() => handleRoleSelect("all")}>
+                      All
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() =>
+                        handleRoleSelect("programchairperson")
+                      }
+                    >
+                      Program Chairperson
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => handleRoleSelect("instructor")}
+                    >
+                      Instructor
+                    </MenuItem>
+                  </Menu>
+                </TableCell>
 
-                    <TableCell>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <strong>Program</strong>
-                        <IconButton onClick={handleCourseClick} size="small">
-                          <ArrowDropDownIcon fontSize="small" />
-                        </IconButton>
-                        <Menu
-                          anchorEl={courseAnchorEl}
-                          open={courseMenuOpen}
-                          onClose={handleCourseClose}
-                        >
-                          <MenuItem onClick={() => handleCourseSelect("all")}>
-                            All
-                          </MenuItem>
-                          {courses.map((course) => (
-                            <MenuItem
-                              key={course._id}
-                              onClick={() => handleCourseSelect(course.code)}
-                            >
-                              {course.code}
-                            </MenuItem>
-                          ))}
-                        </Menu>
-                      </Box>
-                    </TableCell>
+                <TableCell>
+                  <Box
+                    display="flex"
+                    alignItems="center"
+                    sx={{ cursor: "pointer", fontWeight: 700, fontSize: "0.875rem", color: "#333" }}
+                    onClick={handleCourseClick}
+                  >
+                    Program
+                    <IconButton size="small" sx={{ ml: 0.5, p: 0 }}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                  <Menu
+                    anchorEl={courseAnchorEl}
+                    open={courseMenuOpen}
+                    onClose={handleCourseClose}
+                  >
+                    <MenuItem onClick={() => handleCourseSelect("all")}>
+                      All
+                    </MenuItem>
+                    {courses.map((course) => (
+                      <MenuItem
+                        key={course._id}
+                        onClick={() => handleCourseSelect(course.code)}
+                      >
+                        {course.code}
+                      </MenuItem>
+                    ))}
+                  </Menu>
+                </TableCell>
 
-                    <TableCell>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <strong>Status</strong>
-                        <IconButton onClick={handleStatusClick} size="small">
-                          <ArrowDropDownIcon fontSize="small" />
-                        </IconButton>
-                        <Menu
-                          anchorEl={statusAnchorEl}
-                          open={statusMenuOpen}
-                          onClose={handleStatusClose}
-                        >
-                          <MenuItem onClick={() => handleStatusSelect("all")}>
-                            All
-                          </MenuItem>
-                          <MenuItem
-                            onClick={() => handleStatusSelect("active")}
-                          >
-                            Active
-                          </MenuItem>
-                          <MenuItem
-                            onClick={() => handleStatusSelect("inactive")}
-                          >
-                            Inactive
-                          </MenuItem>
-                          <MenuItem
-                            onClick={() =>
-                              handleStatusSelect("forverification")
-                            }
-                          >
-                            For Verification
-                          </MenuItem>
-                        </Menu>
-                      </Box>
-                    </TableCell>
+                <TableCell>
+                  <Box
+                    display="flex"
+                    alignItems="center"
+                    sx={{ cursor: "pointer", fontWeight: 700, fontSize: "0.875rem", color: "#333" }}
+                    onClick={handleStatusClick}
+                  >
+                    Status
+                    <IconButton size="small" sx={{ ml: 0.5, p: 0 }}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                  <Menu
+                    anchorEl={statusAnchorEl}
+                    open={statusMenuOpen}
+                    onClose={handleStatusClose}
+                  >
+                    <MenuItem onClick={() => handleStatusSelect("all")}>
+                      All
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => handleStatusSelect("active")}
+                    >
+                      Active
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => handleStatusSelect("inactive")}
+                    >
+                      Inactive
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() =>
+                        handleStatusSelect("forverification")
+                      }
+                    >
+                      For Verification
+                    </MenuItem>
+                  </Menu>
+                </TableCell>
 
-                    <TableCell>
-                      <strong></strong>
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
+                <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                  Actions
+                </TableCell>
+              </TableRow>
+            </TableHead>
 
-                <TableBody>
-                  {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={6} align="center">
-                        <CircularProgress size={24} />
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                    <CircularProgress size={30} />
+                    <Typography mt={2} variant="body2" color="text.secondary">
+                      Loading faculty data...
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : filteredChairs.length > 0 ? (
+                filteredChairs
+                  .slice(
+                    page * rowsPerPage,
+                    page * rowsPerPage + rowsPerPage
+                  )
+                  .map((chair, index) => (
+                    <TableRow
+                      key={chair._id}
+                      sx={{
+                        backgroundColor: index % 2 === 0 ? "#fafafa" : "white",
+                        transition: "background-color 0.2s ease",
+                        "&:hover": {
+                          backgroundColor: "#f0f4ff",
+                          transform: "scale(1.001)",
+                        },
+                      }}
+                    >
+                      <TableCell sx={{ py: 1.5 }}>
+                        {`${chair.last_name}, ${chair.first_name} ${chair.middle_name ?? ""}`}
                       </TableCell>
-                    </TableRow>
-                  ) : filteredChairs.length > 0 ? (
-                    filteredChairs
-                      .slice(
-                        page * rowsPerPage,
-                        page * rowsPerPage + rowsPerPage
-                      )
-                      .map((chair, index) => (
-                        <TableRow
-                          key={chair._id}
+                      <TableCell sx={{ py: 1.5 }}>{chair.email}</TableCell>
+                      <TableCell sx={{ py: 1.5 }}>
+                        {chair.role === "programchairperson"
+                          ? "Program Chairperson"
+                          : chair.role.charAt(0).toUpperCase() +
+                            chair.role.slice(1)}
+                      </TableCell>
+                      <TableCell sx={{ py: 1.5 }}>{chair.course}</TableCell>
+                      <TableCell sx={{ py: 1.5 }}>
+                        {chair.status === "forverification" ? (
+                          <Chip
+                            label="For Verification"
+                            size="small"
+                            sx={{
+                              bgcolor: "#fff3cd",
+                              color: "#856404",
+                              fontWeight: 500,
+                              borderRadius: "8px",
+                            }}
+                          />
+                        ) : chair.status === "active" ? (
+                          <Chip
+                            label="Active"
+                            size="small"
+                            sx={{
+                              bgcolor: "#d4edda",
+                              color: "#155724",
+                              fontWeight: 500,
+                              borderRadius: "8px",
+                            }}
+                          />
+                        ) : chair.status === "inactive" ? (
+                          <Chip
+                            label="Inactive"
+                            size="small"
+                            sx={{
+                              bgcolor: "#f8d7da",
+                              color: "#721c24",
+                              fontWeight: 500,
+                              borderRadius: "8px",
+                            }}
+                          />
+                        ) : (
+                          <Chip
+                            label={chair.status.charAt(0).toUpperCase() + chair.status.slice(1)}
+                            size="small"
+                            sx={{
+                              bgcolor: "#e2e3e5",
+                              color: "#383d41",
+                              fontWeight: 500,
+                              borderRadius: "8px",
+                            }}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ py: 1.5 }}>
+                        <IconButton
+                          onClick={(e) =>
+                            handleActionMenuOpen(e, chair._id)
+                          }
+                          size="small"
                           sx={{
-                            backgroundColor:
-                              index % 2 === 0 ? "#fafafa" : "white",
-                            "&:hover": { backgroundColor: "#f1f1f1" },
+                            "&:hover": {
+                              backgroundColor: "#f0f4ff",
+                            },
                           }}
                         >
-                          <TableCell>{`${chair.last_name}, ${
-                            chair.first_name
-                          } ${chair.middle_name ?? ""}`}</TableCell>
-                          <TableCell>{chair.email}</TableCell>
-                          <TableCell>
-                            {chair.role === "programchairperson"
-                              ? "Program Chairperson"
-                              : chair.role.charAt(0).toUpperCase() +
-                                chair.role.slice(1)}
-                          </TableCell>
-                          <TableCell>{chair.course}</TableCell>
-                          <TableCell>
-  {chair.status === "forverification" ? (
-    <Chip
-      label="For Verification"
-      size="small"
-      sx={{
-        bgcolor: "#fff3cd",
-        color: "#856404",
-        fontWeight: 500,
-        borderRadius: "8px",
-      }}
-    />
-  ) : chair.status === "active" ? (
-    <Chip
-      label="Active"
-      size="small"
-      sx={{
-        bgcolor: "#d4edda",
-        color: "#155724",
-        fontWeight: 500,
-        borderRadius: "8px",
-      }}
-    />
-  ) : chair.status === "inactive" ? (
-    <Chip
-      label="Inactive"
-      size="small"
-      sx={{
-        bgcolor: "#f8d7da",
-        color: "#721c24",
-        fontWeight: 500,
-        borderRadius: "8px",
-      }}
-    />
-  ) : (
-    <Chip
-      label={chair.status.charAt(0).toUpperCase() + chair.status.slice(1)}
-      size="small"
-      sx={{
-        bgcolor: "#e2e3e5",
-        color: "#383d41",
-        fontWeight: 500,
-        borderRadius: "8px",
-      }}
-    />
-  )}
-</TableCell>
-                          <TableCell>
-                            <IconButton
-                              onClick={(e) =>
-                                handleActionMenuOpen(e, chair._id)
-                              }
-                            >
-                              <MoreHorizIcon />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
+                          <MoreHorizIcon />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
                       ))
                   ) : (
                     <TableRow>
                       <TableCell
                         colSpan={6}
                         align="center"
-                        sx={{ fontStyle: "italic" }}
+                        sx={{ py: 6, fontStyle: "italic", color: "text.secondary" }}
                       >
                         No faculty data available.
                       </TableCell>
@@ -656,17 +730,22 @@ const ProgramchairInfo: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
-            </TableContainer>
 
-            <TablePagination
-              component="div"
-              count={filteredChairs.length}
-              page={page}
-              onPageChange={handleChangePage}
-              rowsPerPage={rowsPerPage}
-              onRowsPerPageChange={handleChangeRowsPerPage}
-              rowsPerPageOptions={[5, 10, 25]}
-            />
+              <TablePagination
+                component="div"
+                count={filteredChairs.length}
+                page={page}
+                onPageChange={handleChangePage}
+                rowsPerPage={rowsPerPage}
+                onRowsPerPageChange={handleChangeRowsPerPage}
+                rowsPerPageOptions={[5, 10, 25]}
+                sx={{
+                  borderTop: "1px solid #e0e0e0",
+                  backgroundColor: "#fafafa",
+                  px: 2,
+                }}
+              />
+            </TableContainer>
 
             {/* Action menu */}
             <Menu
@@ -692,9 +771,7 @@ const ProgramchairInfo: React.FC = () => {
                 Delete
               </MenuItem>
             </Menu>
-          </Paper>
-        </Grid>
-      </Grid>
+      </Box>
 
       <Dialog open={openModal} onClose={handleCloseModal}>
         <DialogTitle>Add Faculty Account</DialogTitle>

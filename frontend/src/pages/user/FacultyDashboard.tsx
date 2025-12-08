@@ -10,6 +10,7 @@ import {
   TableHead,
   TableRow,
   LinearProgress,
+  Grid,
 } from "@mui/material";
 import { green, red, yellow, blue, grey } from "@mui/material/colors";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
@@ -221,33 +222,38 @@ const FacultyDashboard: React.FC = () => {
   });
   return (
     <UserMain>
-      <Box sx={{ color: "grey.900", p: { xs: 2, sm: 3, md: 1 } }}>
-        <Box maxWidth="1200px" mx="auto">
-          {/* Header */}
-          <Box mb={6}>
-            <Typography variant="h4" fontWeight={600}>
-              Attendance
-            </Typography>
-            <Typography variant="body2" color="text.secondary" mt={0.5}>
-              <span style={{ fontWeight: 400 }}>Dashboard</span> /{" "}
-              <span style={{ fontStyle: "italic" }}>Attendance</span>
-            </Typography>
-          </Box>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+            Attendance Dashboard
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            View your attendance records, schedules, and statistics
+          </Typography>
+        </Box>
 
-          <Box
-            display="grid"
-            gridTemplateColumns={{ xs: "1fr", md: "repeat(3, 1fr)" }}
-            gap={3}
-            mb={6}
-          >
-            {/* Timesheet */}
+        {/* Main Content Grid */}
+        <Grid container spacing={3}>
+          {/* Timesheet */}
+          <Grid item xs={12} md={4}>
             <Paper
-              variant="outlined"
               sx={{
                 p: 3,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                backgroundColor: "#fff",
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
+                height: "100%",
               }}
             >
               <Box
@@ -255,15 +261,17 @@ const FacultyDashboard: React.FC = () => {
                 justifyContent="space-between"
                 alignItems="center"
                 mb={3}
+                pb={2}
+                borderBottom="2px solid #e0e0e0"
               >
                 <Typography
-                  variant="subtitle2"
-                  color="primary"
-                  fontWeight={600}
+                  variant="h6"
+                  fontWeight={700}
+                  color="#1a1a1a"
                 >
                   Timesheet
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" fontWeight={500}>
                   {today}
                 </Typography>
               </Box>
@@ -382,14 +390,26 @@ const FacultyDashboard: React.FC = () => {
                 </Box>
               </Box>
             </Paper>
+          </Grid>
 
-            {/* Statistics */}
-            <Paper variant="outlined" sx={{ p: 3 }}>
+          {/* Statistics */}
+          <Grid item xs={12} md={4}>
+            <Paper
+              sx={{
+                p: 3,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                backgroundColor: "#fff",
+                height: "100%",
+              }}
+            >
               <Typography
-                variant="subtitle2"
-                color="primary"
-                fontWeight={600}
-                mb={2}
+                variant="h6"
+                fontWeight={700}
+                color="#1a1a1a"
+                mb={3}
+                pb={2}
+                borderBottom="2px solid #e0e0e0"
               >
                 Statistics
               </Typography>
@@ -457,16 +477,28 @@ const FacultyDashboard: React.FC = () => {
                 </Box>
               ))}
             </Paper>
+          </Grid>
 
-            {/* Today Activity */}
-            <Paper variant="outlined" sx={{ p: 3 }}>
+          {/* Today Activity */}
+          <Grid item xs={12} md={4}>
+            <Paper
+              sx={{
+                p: 3,
+                borderRadius: 3,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                backgroundColor: "#fff",
+                height: "100%",
+              }}
+            >
               <Typography
-                variant="subtitle2"
-                color="primary"
-                fontWeight={600}
-                mb={2}
+                variant="h6"
+                fontWeight={700}
+                color="#1a1a1a"
+                mb={3}
+                pb={2}
+                borderBottom="2px solid #e0e0e0"
               >
-                Today Activity
+                Today's Activity
               </Typography>
               <Box
                 ml={1}
@@ -477,8 +509,14 @@ const FacultyDashboard: React.FC = () => {
                 position="relative"
               >
                 {logs.length === 0 ? (
-                  <Box textAlign="center" py={2}>
-                    <Typography variant="body2" color="text.secondary">
+                  <Box
+                    display="flex"
+                    flexDirection="column"
+                    alignItems="center"
+                    justifyContent="center"
+                    py={4}
+                  >
+                    <Typography variant="body2" color="text.secondary" fontStyle="italic">
                       No activity recorded today
                     </Typography>
                   </Box>
@@ -563,84 +601,92 @@ const FacultyDashboard: React.FC = () => {
                 )}
               </Box>
             </Paper>
-          </Box>
+          </Grid>
+        </Grid>
 
-          {/* Attendance Table */}
-          <Box
-            display="grid"
-            gridTemplateColumns={{ xs: "1fr", lg: "repeat(3, 1fr)" }}
-            gap={3}
+        {/* Schedule Table */}
+        <Paper
+          sx={{
+            p: 3,
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+            backgroundColor: "#fff",
+            overflow: "hidden",
+          }}
+        >
+          <Typography
+            variant="h6"
+            fontWeight={700}
+            color="#1a1a1a"
+            mb={3}
+            pb={2}
+            borderBottom="2px solid #e0e0e0"
           >
-            <Paper
-              variant="outlined"
-              sx={{
-                p: 3,
-                gridColumn: { xs: "span 1", lg: "span 2" },
-                overflowX: "auto",
-              }}
-            >
-              <Typography
-                variant="subtitle2"
-                color="primary"
-                fontWeight={600}
-                mb={2}
-              >
-                Today's Schedule List
-              </Typography>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: grey[100] }}>
-                      <TableCell sx={{ fontWeight: 600 }}>S. No</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Start Time</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>End Time</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Room</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {schedules.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No schedules found for today
-                          </Typography>
+            Today's Schedule List
+          </Typography>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    S. No
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Start Time
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    End Time
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Room
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {schedules.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center" sx={{ py: 6, color: "text.secondary", fontStyle: "italic" }}>
+                      No schedules found for today
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  [...schedules]
+                    .sort((a, b) => {
+                      const [aHour, aMin] = a.startTime
+                        .split(":")
+                        .map(Number);
+                      const [bHour, bMin] = b.startTime
+                        .split(":")
+                        .map(Number);
+                      return aHour !== bHour ? aHour - bHour : aMin - bMin;
+                    })
+                    .map((schedule, idx) => (
+                      <TableRow
+                        key={idx}
+                        sx={{
+                          backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
+                          transition: "background-color 0.2s ease",
+                          "&:hover": {
+                            backgroundColor: "#f0f4ff",
+                            transform: "scale(1.001)",
+                          },
+                        }}
+                      >
+                        <TableCell sx={{ fontWeight: 600, py: 1.5 }}>
+                          {idx + 1}
                         </TableCell>
+                        <TableCell sx={{ py: 1.5 }}>
+                          {formatTime(schedule.startTime)}
+                        </TableCell>
+                        <TableCell sx={{ py: 1.5 }}>{formatTime(schedule.endTime)}</TableCell>
+                        <TableCell sx={{ py: 1.5 }}>{schedule.room}</TableCell>
                       </TableRow>
-                    ) : (
-                      [...schedules]
-                        .sort((a, b) => {
-                          const [aHour, aMin] = a.startTime
-                            .split(":")
-                            .map(Number);
-                          const [bHour, bMin] = b.startTime
-                            .split(":")
-                            .map(Number);
-                          return aHour !== bHour ? aHour - bHour : aMin - bMin;
-                        })
-                        .map((schedule, idx) => (
-                          <TableRow
-                            key={idx}
-                            sx={{
-                              backgroundColor: idx % 2 === 0 ? "white" : grey[50],
-                            }}
-                          >
-                            <TableCell sx={{ fontWeight: 600 }}>
-                              {idx + 1}
-                            </TableCell>
-                            <TableCell>
-                              {formatTime(schedule.startTime)}
-                            </TableCell>
-                            <TableCell>{formatTime(schedule.endTime)}</TableCell>
-                            <TableCell>{schedule.room}</TableCell>
-                          </TableRow>
-                        ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
-          </Box>
-        </Box>
+                    ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       </Box>
     </UserMain>
   );

@@ -108,7 +108,100 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
     }));
   };
 
+  const validateForm = (): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+
+    // Check required fields
+    if (!formData.courseCode || formData.courseCode.trim() === "") {
+      errors.push("Course Code is required");
+    }
+
+    if (!formData.courseTitle || formData.courseTitle.trim() === "") {
+      errors.push("Course Title is required");
+    }
+
+    if (!formData.instructor || formData.instructor.trim() === "") {
+      errors.push("Instructor is required");
+    }
+
+    if (!formData.room || formData.room.trim() === "") {
+      errors.push("Room is required");
+    }
+
+    if (!formData.section || formData.section.trim() === "") {
+      errors.push("Section is required");
+    }
+
+    if (!formData.startTime || formData.startTime.trim() === "") {
+      errors.push("Start Time is required");
+    }
+
+    if (!formData.endTime || formData.endTime.trim() === "") {
+      errors.push("End Time is required");
+    }
+
+    // Validate time range
+    if (formData.startTime && formData.endTime) {
+      const [startHour, startMin] = formData.startTime.split(":").map(Number);
+      const [endHour, endMin] = formData.endTime.split(":").map(Number);
+      const startMinutes = startHour * 60 + startMin;
+      const endMinutes = endHour * 60 + endMin;
+
+      if (endMinutes <= startMinutes) {
+        errors.push("End Time must be after Start Time");
+      }
+    }
+
+    // Check if at least one day is selected
+    const hasSelectedDay = Object.values(formData.days).some((day) => day === true);
+    if (!hasSelectedDay) {
+      errors.push("Please select at least one day");
+    }
+
+    // Check semester dates
+    if (!formData.semesterStartDate || formData.semesterStartDate.trim() === "") {
+      errors.push("Semester Start Date is required");
+    }
+
+    if (!formData.semesterEndDate || formData.semesterEndDate.trim() === "") {
+      errors.push("Semester End Date is required");
+    }
+
+    // Validate date range
+    if (formData.semesterStartDate && formData.semesterEndDate) {
+      const startDate = new Date(formData.semesterStartDate);
+      const endDate = new Date(formData.semesterEndDate);
+
+      if (endDate <= startDate) {
+        errors.push("Semester End Date must be after Start Date");
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+    };
+  };
+
   const handleSubmit = async () => {
+    // Validate form before submission
+    const validation = validateForm();
+    
+    if (!validation.isValid) {
+      Swal.fire({
+        icon: "error",
+        title: "Validation Error",
+        html: `<div style="text-align: left;">
+          <p><strong>Please fill in the following fields:</strong></p>
+          <ul style="margin: 10px 0; padding-left: 20px;">
+            ${validation.errors.map((error) => `<li>${error}</li>`).join("")}
+          </ul>
+        </div>`,
+        confirmButtonText: "OK",
+      });
+      return;
+    }
+
     try {
       setLoading(true);
       const res = await axios.post(
@@ -125,16 +218,57 @@ const AddManualSchedule: React.FC<AddManualScheduleProps> = ({
         showConfirmButton: false,
       });
 
+      // Reset form
+      setFormData({
+        courseTitle: "",
+        courseCode: "",
+        instructor: faculty?._id || "",
+        room: "",
+        startTime: "",
+        endTime: "",
+        days: {
+          mon: false,
+          tue: false,
+          wed: false,
+          thu: false,
+          fri: false,
+          sat: false,
+        },
+        semesterStartDate: "",
+        semesterEndDate: "",
+        section: "",
+      });
+      setSelectedSemester(null);
+
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to create schedule", error);
+      
+      // Extract error message from response
+      let errorMessage = "Failed to create schedule. Please try again.";
+      
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.response?.data?.errors) {
+        // Handle multiple errors
+        const errors = error.response.data.errors;
+        errorMessage = Array.isArray(errors) 
+          ? errors.join(", ") 
+          : errors;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
       Swal.fire({
         icon: "error",
         title: "Error",
-        text: "Failed to create schedule. Please try again.",
+        html: `<div style="text-align: left;">
+          <p><strong>${errorMessage}</strong></p>
+        </div>`,
+        confirmButtonText: "OK",
       });
     } finally {
-      setLoading(false); // stop loading
+      setLoading(false);
     }
   };
 
@@ -241,9 +375,11 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Course Code"
+                  label="Course Code *"
                   variant="outlined"
                   fullWidth
+                  required
+                  error={!formData.courseCode && formData.courseCode !== ""}
                 />
               )}
               isOptionEqualToValue={(option, value) => option._id === value._id}
@@ -263,9 +399,11 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Room"
+                  label="Room *"
                   variant="outlined"
                   fullWidth
+                  required
+                  error={!formData.room && formData.room !== ""}
                 />
               )}
               isOptionEqualToValue={(option, value) => option._id === value._id}
@@ -287,9 +425,11 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Section"
+                  label="Section *"
                   variant="outlined"
                   fullWidth
+                  required
+                  error={!formData.section && formData.section !== ""}
                 />
               )}
               isOptionEqualToValue={(option, value) => option._id === value._id}
@@ -346,9 +486,11 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Semester"
+                  label="Semester *"
                   variant="outlined"
                   fullWidth
+                  required
+                  error={!formData.semesterStartDate || !formData.semesterEndDate}
                 />
               )}
             />
@@ -356,26 +498,30 @@ const [selectedSemester, setSelectedSemester] = useState<Semester | null>(null);
 
           <Grid item xs={6}>
             <TextField
-              label="Start Time"
+              label="Start Time *"
               name="startTime"
               type="time"
               fullWidth
+              required
               onChange={handleChange}
               InputLabelProps={{ shrink: true }}
+              error={!formData.startTime && formData.startTime !== ""}
             />
           </Grid>
           <Grid item xs={6}>
             <TextField
-              label="End Time"
+              label="End Time *"
               name="endTime"
               type="time"
               fullWidth
+              required
               onChange={handleChange}
               InputLabelProps={{ shrink: true }}
+              error={!formData.endTime && formData.endTime !== ""}
             />
           </Grid>
           <Grid item xs={12}>
-            <label>Days:</label>
+            <label>Days: *</label>
             <div>
               {["mon", "tue", "wed", "thu", "fri", "sat"].map((day) => (
                 <FormControlLabel

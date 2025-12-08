@@ -565,6 +565,17 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       console.log(`[API] Logging ${logType || 'TIME IN'} for: ${instructorName} (Late: ${isLate}) [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
       console.log(`[API] Looking for schedule ID: ${scheduleId}`);
       
+      // ⚡ VALIDATION: Check if scheduleId is valid before querying MongoDB
+      if (!scheduleId || scheduleId === '' || typeof scheduleId !== 'string') {
+        console.log(`[API] ❌ Invalid schedule ID: ${scheduleId}`);
+        res.status(400).json({ 
+          message: 'Invalid schedule ID',
+          scheduleId: scheduleId,
+          instructorName: instructorName
+        });
+        return;
+      }
+      
       // Use data service (works both online and offline)
       const schedule = await ScheduleService.findById(scheduleId);
       if (!schedule) {
@@ -631,6 +642,17 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       const { instructorName, scheduleId, timestamp, totalMinutes } = req.body;
       console.log(`[API] Logging TIME OUT for: ${instructorName} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
       console.log(`[API] Looking for schedule ID: ${scheduleId}`);
+      
+      // ⚡ VALIDATION: Check if scheduleId is valid before querying MongoDB
+      if (!scheduleId || scheduleId === '' || typeof scheduleId !== 'string') {
+        console.log(`[API] ❌ Invalid schedule ID: ${scheduleId}`);
+        res.status(400).json({ 
+          message: 'Invalid schedule ID',
+          scheduleId: scheduleId,
+          instructorName: instructorName
+        });
+        return;
+      }
       
       // Use data service (works both online and offline)
       const schedule = await ScheduleService.findById(scheduleId);
@@ -704,23 +726,48 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       
       // Format response
       const formattedSchedules = schedules.map(s => {
-        const instructor = typeof s.instructor === 'object' ? s.instructor : null;
+        // ⚡ CRITICAL: Ensure _id is always a string (MongoDB ObjectId needs conversion)
+        const scheduleId = s._id ? String(s._id) : (s.id ? String(s.id) : null);
+        if (!scheduleId) {
+          console.log(`[API] ⚠️ Schedule missing ID: ${s.courseCode || 'N/A'} - Skipping schedule`);
+          return null; // Skip schedules without ID
+        }
+        
+        // ⚡ CRITICAL: Extract instructor data properly
+        let instructorData = null;
+        if (s.instructor) {
+          if (typeof s.instructor === 'object') {
+            // Instructor is populated (UserData object)
+            const inst = s.instructor as any;
+            if (inst.first_name && inst.last_name) {
+              instructorData = {
+                first_name: inst.first_name,
+                last_name: inst.last_name
+              };
+            } else {
+              console.log(`[API] ⚠️ Schedule ${scheduleId} has instructor object but missing first_name or last_name`);
+            }
+          } else if (typeof s.instructor === 'string') {
+            // Instructor is just an ID string - need to fetch it
+            console.log(`[API] ⚠️ Schedule ${scheduleId} has instructor as ID string, not populated`);
+          }
+        } else {
+          console.log(`[API] ⚠️ Schedule ${scheduleId} has no instructor data`);
+        }
+        
         return {
-          _id: s._id || s.id,
-          courseTitle: s.courseTitle,
-          courseCode: s.courseCode,
-          room: s.room,
-          startTime: s.startTime,
-          endTime: s.endTime,
-          days: s.days,
-          semesterStartDate: s.semesterStartDate,
-          semesterEndDate: s.semesterEndDate,
-          instructor: instructor ? {
-            first_name: (instructor as any).first_name,
-            last_name: (instructor as any).last_name
-          } : null
+          _id: scheduleId,
+          courseTitle: s.courseTitle || 'N/A',
+          courseCode: s.courseCode || 'N/A',
+          room: s.room || 'N/A',
+          startTime: s.startTime || '00:00',
+          endTime: s.endTime || '00:00',
+          days: s.days || {},
+          semesterStartDate: s.semesterStartDate || '',
+          semesterEndDate: s.semesterEndDate || '',
+          instructor: instructorData
         };
-      });
+      }).filter(s => s !== null); // Remove null entries (schedules without ID)
       
       console.log(`[API] ✅ Found ${formattedSchedules.length} active schedules [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
       res.json(formattedSchedules);
@@ -778,10 +825,17 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       
       // Find the instructor using data service (works both online and offline)
       const allInstructors = await UserService.findByRole('instructor');
+      console.log(`[API] [DEBUG] Total instructors in database: ${allInstructors.length}`);
+      
       const instructor = allInstructors.find(u => 
         u.first_name.toLowerCase() === firstName.toLowerCase() &&
         u.last_name.toLowerCase() === lastName.toLowerCase()
       );
+      
+      // ⚡ DEBUG: Log all instructor names for debugging
+      if (!instructor && allInstructors.length > 0) {
+        console.log(`[API] [DEBUG] Sample instructor names in database:`, allInstructors.slice(0, 10).map(u => `"${u.first_name} ${u.last_name}"`).join(', '));
+      }
 
       if (!instructor) {
         console.log(`[API] ❌ Instructor not found: ${instructorName}`);
@@ -814,16 +868,33 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
 
       // Get schedules for this instructor using data service
       const instructorSchedules = await ScheduleService.findByInstructor(instructorId || '');
+      console.log(`[API] [DEBUG] Found ${instructorSchedules.length} total schedules for instructor ${instructorId}`);
       
       // Filter active schedules (within semester dates and active on current day)
       const activeSchedules: typeof instructorSchedules = instructorSchedules.filter(s => {
         const withinDates = s.semesterStartDate <= currentDateStr && s.semesterEndDate >= currentDateStr;
         const days = s.days as { [key: string]: boolean };
         const activeToday = days && days[dayOfWeek] === true;
+        
+        // ⚡ DEBUG: Log why schedules are filtered out
+        if (!withinDates) {
+          console.log(`[API] [DEBUG] Schedule ${s._id} filtered out: outside semester dates (${s.semesterStartDate} to ${s.semesterEndDate}, current: ${currentDateStr})`);
+        }
+        if (!activeToday) {
+          console.log(`[API] [DEBUG] Schedule ${s._id} filtered out: not active on ${dayOfWeek} (days: ${JSON.stringify(days)})`);
+        }
+        
         return withinDates && activeToday;
       });
 
       console.log(`[API] Found ${activeSchedules.length} active schedules for today`);
+      
+      // ⚡ DEBUG: Log all active schedules
+      if (activeSchedules.length > 0) {
+        activeSchedules.forEach(s => {
+          console.log(`[API] [DEBUG] Active schedule: _id=${s._id}, courseCode=${s.courseCode}, time=${s.startTime}-${s.endTime}, days=${JSON.stringify(s.days)}`);
+        });
+      }
 
       if (activeSchedules.length === 0) {
         console.log(`[API] ❌ No schedule found for ${instructorName} on ${dayOfWeek}`);
@@ -840,24 +911,31 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         return;
       }
 
-      // Find schedule that matches current time
+      // Find schedule that matches current time (including 30 min before class start)
+      // This matches the Python code logic which allows 30 minutes before class
       let schedule: typeof activeSchedules[0] | undefined = activeSchedules.find((s: typeof activeSchedules[0]) => {
         const [startH, startM] = s.startTime.split(':').map(Number);
         const [endH, endM] = s.endTime.split(':').map(Number);
         const startMinutes = startH * 60 + startM;
         const endMinutes = endH * 60 + endM;
-        return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+        const timeBeforeClass = startMinutes - 30; // 30 minutes before class start
+        const matches = currentMinutes >= timeBeforeClass && currentMinutes <= endMinutes;
+        
+        // ⚡ DEBUG: Log time matching
+        if (!matches) {
+          console.log(`[API] [DEBUG] Schedule ${s._id} time doesn't match: current=${currentMinutes}min, range=${timeBeforeClass}-${endMinutes}min (start=${startMinutes}min, end=${endMinutes}min)`);
+        }
+        
+        return matches;
       });
 
       if (!schedule) {
-        // No schedule at current time, return first schedule found
-        schedule = activeSchedules[0];
-        const [startH, startM] = schedule.startTime.split(':').map(Number);
-        const [endH, endM] = schedule.endTime.split(':').map(Number);
-        const startMinutes = startH * 60 + startM;
-        const endMinutes = endH * 60 + endM;
-
-        console.log(`[API] ⏰ Schedule found but not active at current time`);
+        // No schedule at current time (including 30 min buffer), return null
+        console.log(`[API] ⏰ No active schedule found for ${instructorName} at current time ${currentTime} (day: ${dayOfWeek})`);
+        if (activeSchedules.length > 0) {
+          const firstSchedule = activeSchedules[0];
+          console.log(`[API] Available schedules: ${activeSchedules.map(s => `${s.startTime}-${s.endTime}`).join(', ')}`);
+        }
         res.json({ 
           schedule: null,
           isValidSchedule: false,
@@ -868,9 +946,9 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
             instructor: { firstName, lastName, id: instructorId },
             currentTime,
             currentDay: dayOfWeek,
-            scheduleFound: true,
+            scheduleFound: activeSchedules.length > 0,
             timeInRange: false,
-            scheduleTime: `${schedule.startTime}-${schedule.endTime}`
+            availableSchedules: activeSchedules.map(s => `${s.startTime}-${s.endTime}`)
           }
         });
         return;
@@ -878,25 +956,41 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
 
       console.log(`[API] ✅ Active schedule found for ${instructorName} - Time matches`);
       
-      // If roomName is provided, validate it matches the schedule room
+      // ⚡ ROOM VALIDATION: If roomName is provided, validate it matches the schedule room
+      // Only users with schedules in the correct room should be green
       let roomMatch = null;
-      let isValidSchedule = true;
+      let isValidSchedule = false; // ⚡ DEFAULT TO FALSE: Only set to true if room matches
       
-      if (roomName) {
-        const scheduleRoom = (schedule.room || "").trim().toLowerCase();
-        const providedRoom = roomName.trim().toLowerCase();
+      if (roomName && roomName.trim()) {
+        // ⚡ FLEXIBLE ROOM MATCHING: Handle variations like "Lab 1", "Lab1", "lab 1", etc.
+        // Normalize both room names by removing spaces and converting to lowercase
+        const normalizeRoom = (room: string): string => {
+          return room.trim().toLowerCase().replace(/\s+/g, ''); // Remove all spaces and lowercase
+        };
         
-        // Check if rooms match (exact match or partial match)
+        const scheduleRoom = normalizeRoom(schedule.room || "");
+        const providedRoom = normalizeRoom(roomName);
+        
+        // Check if rooms match (normalized comparison)
+        // Also check partial matches for cases like "Lab 1" vs "Computer Lab 1"
         roomMatch = scheduleRoom === providedRoom ||
                    scheduleRoom.includes(providedRoom) ||
-                   providedRoom.includes(scheduleRoom);
+                   providedRoom.includes(scheduleRoom) ||
+                   // Additional check: "lab1" matches "lab 1", "lab-1", etc.
+                   scheduleRoom.replace(/[^a-z0-9]/g, '') === providedRoom.replace(/[^a-z0-9]/g, '');
         
-        if (!roomMatch) {
-          console.log(`[API] ⚠️ Schedule time matches but room does not match. Expected: "${schedule.room}", Provided: "${roomName}"`);
-          isValidSchedule = false;
+        if (roomMatch) {
+          console.log(`[API] ✅ Room matches: "${schedule.room}" = "${roomName}" → isValidSchedule=true`);
+          isValidSchedule = true; // ✅ Only set to true if room matches
         } else {
-          console.log(`[API] ✅ Room matches: "${schedule.room}"`);
+          console.log(`[API] ⚠️ Schedule time matches but room does not match. Expected: "${schedule.room}", Provided: "${roomName}" → isValidSchedule=false`);
+          isValidSchedule = false; // ❌ Wrong room = yellow box
         }
+      } else {
+        // ⚡ NO ROOM PROVIDED: If roomName is not provided, cannot validate room
+        // Default to false to be safe (user should always provide roomName)
+        console.log(`[API] ⚠️ No roomName provided - cannot validate room. Setting isValidSchedule=false for safety.`);
+        isValidSchedule = false;
       }
       
       // Ensure days object is properly formatted
@@ -914,13 +1008,39 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         console.log(`[API] ⚠️ courseCode was missing, using: ${scheduleObj.courseCode}`);
       }
       
+      // ⚡ CRITICAL: Ensure _id is always a string (MongoDB ObjectId needs conversion)
+      if (scheduleObj._id) {
+        scheduleObj._id = String(scheduleObj._id);
+      } else if ((scheduleObj as any).id) {
+        scheduleObj._id = String((scheduleObj as any).id);
+      } else {
+        console.log(`[API] ❌ Schedule missing _id: ${scheduleObj.courseCode} - Cannot return schedule without ID`);
+        res.status(500).json({ 
+          schedule: null,
+          error: 'Schedule missing _id field',
+          mode: isOfflineMode() ? 'offline' : 'online'
+        });
+        return;
+      }
+      
+      // ⚡ VALIDATION: Ensure _id is not empty
+      if (!scheduleObj._id || scheduleObj._id === 'None' || scheduleObj._id === 'N/A') {
+        console.log(`[API] ❌ Schedule has invalid _id: ${scheduleObj._id} for ${scheduleObj.courseCode}`);
+        res.status(500).json({ 
+          schedule: null,
+          error: 'Schedule has invalid _id',
+          mode: isOfflineMode() ? 'offline' : 'online'
+        });
+        return;
+      }
+      
       // Add validation flags to schedule object
       scheduleObj.isValidSchedule = isValidSchedule;
       scheduleObj.timeMatch = true;
       scheduleObj.roomMatch = roomMatch;
       scheduleObj.roomValidated = roomName ? true : false;
       
-      console.log(`[API] 📋 Returning schedule with courseCode: ${scheduleObj.courseCode}`);
+      console.log(`[API] 📋 Returning schedule with courseCode: ${scheduleObj.courseCode}, _id: ${scheduleObj._id}`);
 
       // Return schedule even if room doesn't match (for backward compatibility)
       res.json({ 

@@ -232,7 +232,15 @@ const FacultyInfo: React.FC = () => {
     setSearchQuery(event.target.value.toLowerCase());
   };
 
+  // Get current logged-in user ID to exclude from list
+  const currentUserId = localStorage.getItem("userId");
+
   const filteredFacultyList = facultyList.filter((faculty) => {
+    // ⚡ EXCLUDE CURRENT USER: Don't show the logged-in program chair in the faculty list
+    if (faculty._id === currentUserId) {
+      return false;
+    }
+
     const fullName = `${faculty.last_name}, ${faculty.first_name} ${
       faculty.middle_name || ""
     }`.toLowerCase();
@@ -261,10 +269,17 @@ const FacultyInfo: React.FC = () => {
     setOpenInfoModal(false);
   };
 
-  const generateUsername = (firstName: string, lastName: string) => {
-    const first = firstName.substring(0, 3).toUpperCase();
-    const last = lastName.substring(0, 3).toUpperCase();
-    return last + first;
+  const generateUsername = (firstName: string, lastName: string, middleName?: string) => {
+    // Different construction: first initial + last name (up to 5 chars) + first name (up to 3 chars)
+    const firstInitial = firstName.charAt(0).toUpperCase();
+    const lastPart = lastName.substring(0, Math.min(5, lastName.length)).toUpperCase();
+    const firstPart = firstName.substring(0, Math.min(3, firstName.length)).toUpperCase();
+    const middle = middleName ? middleName.charAt(0).toUpperCase() : '';
+    
+    if (middle) {
+      return firstInitial + lastPart + middle + firstPart;
+    }
+    return firstInitial + lastPart + firstPart;
   };
 
   useEffect(() => {
@@ -272,7 +287,8 @@ const FacultyInfo: React.FC = () => {
       if (newFaculty.first_name && newFaculty.last_name) {
         const username = generateUsername(
           newFaculty.first_name,
-          newFaculty.last_name
+          newFaculty.last_name,
+          newFaculty.middle_name
         );
         setNewFaculty((prev) => ({ ...prev, username }));
       }
@@ -302,68 +318,95 @@ const FacultyInfo: React.FC = () => {
 
   return (
     <AdminMain>
-      <Box
-        display="flex"
-        alignItems="center"
-        justifyContent="space-between"
-        sx={{ mb: 2 }}
-      >
-        <Box mb={3}>
-          <Typography variant="h4" fontWeight="bold" color="#333" gutterBottom>
-            Faculty Information {CourseName && `- ${CourseName.toUpperCase()}`}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mt={0.5}>
-            This section provides detailed information about the faculty members{" "}
-            {CourseName && `under the ${CourseName.toUpperCase()} program`}.
-          </Typography>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          display="flex"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Box>
+            <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+              Faculty Information {CourseName && `- ${CourseName.toUpperCase()}`}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Manage and view detailed information about faculty members
+              {CourseName && ` under the ${CourseName.toUpperCase()} program`}
+            </Typography>
+          </Box>
+
+          <Box display="flex" alignItems="center" gap={2}>
+            <TextField
+              variant="outlined"
+              placeholder="Search faculty..."
+              size="small"
+              sx={{
+                width: "280px",
+                backgroundColor: "#f8f9fa",
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2,
+                },
+              }}
+              onChange={handleSearch}
+            />
+
+            <IconButton
+              color="primary"
+              onClick={handleOpenModal}
+              sx={{
+                backgroundColor: "primary.main",
+                color: "#fff",
+                "&:hover": {
+                  backgroundColor: "primary.dark",
+                },
+                borderRadius: 2,
+                p: 1.5,
+              }}
+            >
+              <AddIcon />
+            </IconButton>
+          </Box>
         </Box>
 
-        <TextField
-          variant="outlined"
-          placeholder="Search faculty..."
-          size="small"
-          sx={{ mx: 2, width: "250px" }}
-          onChange={handleSearch}
-        />
-
-        <IconButton color="primary" onClick={handleOpenModal}>
-          <AddIcon />
-        </IconButton>
-      </Box>
-
-      <Grid container spacing={2}>
-        <Grid item xs={12}>
-          <TableContainer
-            component={Paper}
-            sx={{
-              width: "100%",
-              borderRadius: 2,
-              boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.05)",
-            }}
-          >
+        {/* Table Section */}
+        <TableContainer
+          component={Paper}
+          sx={{
+            width: "100%",
+            borderRadius: 3,
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+            overflow: "hidden",
+          }}
+        >
             <Table>
-              <TableHead sx={{ backgroundColor: "#F5F3F4" }}>
-                <TableRow>
-                  <TableCell>
-                    <strong>Profile</strong>
+              <TableHead>
+                <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Profile
                   </TableCell>
-                  <TableCell>
-                    <strong>Full Name</strong>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Full Name
                   </TableCell>
-                  <TableCell>
-                    <strong>Email</strong>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Email
                   </TableCell>
-                  <TableCell>
-                    <strong>Username</strong>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Username
                   </TableCell>
                   <TableCell>
                     <Box
                       display="flex"
                       alignItems="center"
-                      sx={{ cursor: "pointer" }}
+                      sx={{ cursor: "pointer", fontWeight: 700, fontSize: "0.875rem", color: "#333" }}
                       onClick={handleStatusClick}
                     >
-                      <strong>Status of Account</strong>
+                      Status of Account
                       <IconButton size="small" sx={{ ml: 0.5, p: 0 }}>
                         <ArrowDropDownIcon fontSize="small" />
                       </IconButton>
@@ -372,6 +415,12 @@ const FacultyInfo: React.FC = () => {
                       anchorEl={statusAnchorEl}
                       open={statusMenuOpen}
                       onClose={handleStatusClose}
+                      PaperProps={{
+                        sx: {
+                          borderRadius: 2,
+                          boxShadow: "0px 4px 20px rgba(0,0,0,0.1)",
+                        },
+                      }}
                     >
                       <MenuItem onClick={() => handleStatusSelect("all")}>
                         All
@@ -389,11 +438,13 @@ const FacultyInfo: React.FC = () => {
                       </MenuItem>
                     </Menu>
                   </TableCell>
-                  <TableCell />
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }} align="center">
+                    Actions
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {paginatedFacultyList.map((faculty) => (
+                {paginatedFacultyList.map((faculty, idx) => (
                   <TableRow
                     key={faculty._id}
                     onClick={() => handleOpenInfoModal(faculty)}
@@ -401,9 +452,10 @@ const FacultyInfo: React.FC = () => {
                       backgroundColor:
                         selectedFaculty === faculty._id
                           ? "#E3F2FD"
-                          : "transparent",
+                          : idx % 2 === 0 ? "#fafafa" : "white",
                       cursor: "pointer",
-                      "&:hover": { backgroundColor: "#FAFAFA" },
+                      transition: "background-color 0.2s ease",
+                      "&:hover": { backgroundColor: "#f0f4ff" },
                     }}
                   >
                     <TableCell>
@@ -534,6 +586,10 @@ const FacultyInfo: React.FC = () => {
               rowsPerPage={rowsPerPage}
               onRowsPerPageChange={handleChangeRowsPerPage}
               rowsPerPageOptions={[5, 10, 25, 50]}
+              sx={{
+                borderTop: "1px solid #e0e0e0",
+                backgroundColor: "#fafafa",
+              }}
             />
             <InfoModal
               open={openInfoModal}
@@ -541,8 +597,7 @@ const FacultyInfo: React.FC = () => {
               faculty={selectedFacultyInfo}
             />
           </TableContainer>
-        </Grid>
-      </Grid>
+        </Box>
 
       <AddFacultyModal
         open={openModal}

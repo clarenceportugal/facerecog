@@ -210,19 +210,26 @@ const TimeBreakdown: React.FC = React.memo(() => {
 
   return (
     <AdminMain>
-      <Box p={3}>
-        <Typography variant="h4" fontWeight="bold" gutterBottom>
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
           Faculty Time In/Out Breakdown
         </Typography>
         <Typography variant="body2" color="text.secondary" mb={3}>
-          View detailed monthly records of time in, time out, and attendance status.
+            View detailed records of time in, time out, and attendance status
         </Typography>
 
         {/* ✅ Search Bar with Advanced Filters Button and Refresh */}
-        <Grid container spacing={2} alignItems="center" justifyContent="center" mb={3}>
-          <Grid item xs={12} md={6}>
+          <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
             <TextField
-              fullWidth
               size="small"
               placeholder="Search by Instructor Name..."
               value={searchQuery}
@@ -243,34 +250,34 @@ const TimeBreakdown: React.FC = React.memo(() => {
                     >
                       <RefreshIcon />
                     </IconButton>
-                    <TuneIcon
+                    <IconButton
+                      size="small"
                       onClick={() => {
-                        // load current applied filters into temp state
                         setTempYear(selectedYear);
                         setTempMonth(selectedMonth);
                         setTempDay(selectedDay);
                         setTempRoom(selectedRoom);
                         setShowAdvanced(true);
                       }}
-                      sx={{
-                        cursor: "pointer",
-                        color: "action.active",
-                        "&:hover": { color: "primary.main" },
-                      }}
-                    />
+                      title="Advanced Filters"
+                    >
+                      <TuneIcon />
+                    </IconButton>
                   </InputAdornment>
                 ),
               }}
               sx={{
-                backgroundColor: "#fff",
+                flex: 1,
+                minWidth: 300,
+                backgroundColor: "#f8f9fa",
                 borderRadius: 2,
                 "& .MuiOutlinedInput-root": {
                   borderRadius: 2,
                 },
               }}
             />
-          </Grid>
-        </Grid>
+          </Box>
+        </Box>
 
         {/* ✅ Modern Modal for Advanced Filters */}
         <Dialog open={showAdvanced} onClose={() => setShowAdvanced(false)} maxWidth="sm" fullWidth>
@@ -380,11 +387,19 @@ const TimeBreakdown: React.FC = React.memo(() => {
         </Dialog>
 
         {/* ✅ Table */}
-        <TableContainer component={Paper} elevation={4} sx={{ borderRadius: 3 }}>
+        <TableContainer 
+          component={Paper} 
+          elevation={4} 
+          sx={{ 
+            borderRadius: 3,
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+            overflow: "hidden",
+          }}
+        >
           <Box sx={{ maxHeight: 500, overflow: "auto" }}>
             <Table stickyHeader size="small">
               <TableHead>
-                <TableRow>
+                <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
                   {[
                     "Date",
                     "Instructor Name",
@@ -400,11 +415,10 @@ const TimeBreakdown: React.FC = React.memo(() => {
                       sx={{
                         position: "sticky",
                         top: 0,
-                        backgroundColor: "#f5f5f5",
+                        backgroundColor: "#f1f3f4",
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
                         color: "#333",
-                        fontWeight: "bold",
-                        fontSize: "0.9rem",
-                        textTransform: "uppercase",
                       }}
                     >
                       {header}
@@ -436,6 +450,7 @@ const TimeBreakdown: React.FC = React.memo(() => {
                       hover
                       sx={{
                         backgroundColor: index % 2 === 0 ? "#fafafa" : "white",
+                        transition: "background-color 0.2s ease",
                         "&:hover": { backgroundColor: "#f0f4ff" },
                       }}
                     >

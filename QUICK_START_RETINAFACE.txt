@@ -1,0 +1,66 @@
+═══════════════════════════════════════════════════════════════
+🚀 RETINAFACE QUICK START PARA SA RTX 3050 Ti 4GB
+═══════════════════════════════════════════════════════════════
+
+✅ COMPLETED:
+- Model files ready: retinaface/model/R50/
+- Code optimized for RTX 3050 Ti 4GB
+- GPU settings configured for maximum performance
+
+═══════════════════════════════════════════════════════════════
+INSTALLATION (Kailangan ng sudo password)
+═══════════════════════════════════════════════════════════════
+
+Option 1: Python 3.11 Virtual Environment (RECOMMENDED)
+─────────────────────────────────────────────────────────────
+./setup_retinaface_python311.sh
+
+Option 2: Manual Installation
+─────────────────────────────────────────────────────────────
+# 1. Install Python dev headers
+sudo apt-get install python3.11 python3.11-dev python3.11-venv
+
+# 2. Create virtual environment
+python3.11 -m venv ~/eduvision_venv
+source ~/eduvision_venv/bin/activate
+
+# 3. Install MXNet with GPU
+pip install mxnet-cu111
+
+# 4. Install dependencies
+pip install opencv-python numpy cython
+
+# 5. Build extensions
+cd /home/renz/Desktop/eduvision/retinaface
+make
+
+═══════════════════════════════════════════════════════════════
+CURRENT PERFORMANCE SETTINGS
+═══════════════════════════════════════════════════════════════
+
+✅ Detection Size: 640x640 (GPU) - Maximum performance
+✅ GPU Memory: 3.5GB limit (safe for RTX 3050 Ti 4GB)
+✅ Max Faces: 100 (optimized for 32GB RAM)
+✅ Multi-threading: Optimized for i5-11400H (6C/12T)
+✅ RetinaFace: Single scale, no flip (maximum speed)
+
+═══════════════════════════════════════════════════════════════
+EXPECTED PERFORMANCE
+═══════════════════════════════════════════════════════════════
+
+With RTX 3050 Ti 4GB + i5-11400H + 32GB RAM:
+- Detection Speed: ~30-60 FPS
+- Recognition Speed: ~100-200 faces/second
+- GPU Memory: ~2-3GB
+- RAM Usage: ~2-4GB
+
+═══════════════════════════════════════════════════════════════
+FALLBACK
+═══════════════════════════════════════════════════════════════
+
+Kung hindi pa naka-install ang MXNet:
+✅ System ay gagamit ng SCRFD (already optimized)
+✅ Parehong accurate at mabilis
+✅ No additional setup needed
+
+═══════════════════════════════════════════════════════════════

@@ -400,8 +400,45 @@ export const ScheduleService = {
         return mapOfflineScheduleToScheduleData(s, instructor);
       });
     }
-    const schedules = await Schedule.find({ instructor: instructorId }).populate('instructor').populate('section');
-    return schedules.map(mongoScheduleToScheduleData);
+    // ⚡ CRITICAL: Always populate instructor to ensure we have name data
+    const schedules = await Schedule.find({ instructor: instructorId })
+      .populate({
+        path: 'instructor',
+        select: 'first_name last_name' // Only get needed fields
+      })
+      .populate('section');
+    
+    console.log(`[SCHEDULE SERVICE] [DEBUG] Found ${schedules.length} schedules for instructor ${instructorId}`);
+    
+    // Filter out schedules where instructor population failed
+    const validSchedules = schedules.filter(s => {
+      if (!s._id) {
+        console.log(`[SCHEDULE SERVICE] ⚠️ Schedule missing _id: ${s.courseCode || 'N/A'}`);
+        return false;
+      }
+      // ⚡ TYPE SAFETY: Check if instructor is populated (not just ObjectId)
+      if (!s.instructor) {
+        console.log(`[SCHEDULE SERVICE] ⚠️ Schedule ${s._id} has no instructor`);
+        return false;
+      }
+      // Check if instructor is an object (populated) and has required fields
+      if (typeof s.instructor === 'object' && 'first_name' in s.instructor && 'last_name' in s.instructor) {
+        const instructor = s.instructor as any;
+        if (!instructor.first_name || !instructor.last_name) {
+          console.log(`[SCHEDULE SERVICE] ⚠️ Schedule ${s._id} has instructor but missing first_name or last_name`);
+          return false;
+        }
+      } else {
+        // Instructor is ObjectId (not populated) - this shouldn't happen but handle it
+        console.log(`[SCHEDULE SERVICE] ⚠️ Schedule ${s._id} has instructor as ObjectId (not populated)`);
+        return false;
+      }
+      return true;
+    });
+    
+    console.log(`[SCHEDULE SERVICE] [DEBUG] ${validSchedules.length} valid schedules after filtering`);
+    
+    return validSchedules.map(mongoScheduleToScheduleData);
   },
 
   async findByRoom(room: string): Promise<ScheduleData[]> {
@@ -424,8 +461,41 @@ export const ScheduleService = {
         return mapOfflineScheduleToScheduleData(s, instructor);
       });
     }
-    const schedules = await Schedule.find().populate('instructor').populate('section');
-    return schedules.map(mongoScheduleToScheduleData);
+    // ⚡ CRITICAL: Always populate instructor and section to ensure data is available
+    const schedules = await Schedule.find()
+      .populate({
+        path: 'instructor',
+        select: 'first_name last_name' // Only get needed fields
+      })
+      .populate('section');
+    
+    // Filter out schedules where instructor population failed
+    const validSchedules = schedules.filter(s => {
+      if (!s._id) {
+        console.log(`[SCHEDULE SERVICE] ⚠️ Schedule missing _id: ${s.courseCode || 'N/A'}`);
+        return false;
+      }
+      // ⚡ TYPE SAFETY: Check if instructor is populated (not just ObjectId)
+      if (!s.instructor) {
+        console.log(`[SCHEDULE SERVICE] ⚠️ Schedule ${s._id} has no instructor`);
+        return false;
+      }
+      // Check if instructor is an object (populated) and has required fields
+      if (typeof s.instructor === 'object' && 'first_name' in s.instructor && 'last_name' in s.instructor) {
+        const instructor = s.instructor as any;
+        if (!instructor.first_name || !instructor.last_name) {
+          console.log(`[SCHEDULE SERVICE] ⚠️ Schedule ${s._id} has instructor but missing first_name or last_name`);
+          return false;
+        }
+      } else {
+        // Instructor is ObjectId (not populated) - this shouldn't happen but handle it
+        console.log(`[SCHEDULE SERVICE] ⚠️ Schedule ${s._id} has instructor as ObjectId (not populated)`);
+        return false;
+      }
+      return true;
+    });
+    
+    return validSchedules.map(mongoScheduleToScheduleData);
   },
 
   async create(data: Omit<ScheduleData, '_id' | 'id'>): Promise<ScheduleData> {
