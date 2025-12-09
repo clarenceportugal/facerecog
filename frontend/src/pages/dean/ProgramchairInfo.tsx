@@ -773,116 +773,133 @@ const ProgramchairInfo: React.FC = () => {
             </Menu>
       </Box>
 
-      <Dialog open={openModal} onClose={handleCloseModal}>
-        <DialogTitle>Add Faculty Account</DialogTitle>
-        <DialogContent>
-          <TextField
-            fullWidth
-            label="Last Name"
-            name="last_name"
-            value={newFaculty.last_name}
-            onChange={handleInputChange}
-            margin="dense"
-          />
-          <TextField
-            fullWidth
-            label="First Name"
-            name="first_name"
-            value={newFaculty.first_name}
-            onChange={handleInputChange}
-            margin="dense"
-          />
-          <TextField
-            fullWidth
-            label="Middle Name"
-            name="middle_name"
-            value={newFaculty.middle_name}
-            onChange={handleInputChange}
-            margin="dense"
-          />
-          <TextField
-            label="Username"
-            name="username"
-            value={newFaculty.username}
-            fullWidth
-            margin="normal"
-            InputProps={{
-              readOnly: true,
-            }}
-          />
+      {/* make sure you have: import Autocomplete from '@mui/material/Autocomplete' at the top of the file */}
 
-          <TextField
-            fullWidth
-            label="Email"
-            name="email"
-            value={newFaculty.email}
-            onChange={handleInputChange}
-            margin="dense"
-          />
-          <TextField
-            fullWidth
-            label="Password"
-            name="password"
-            type={showPassword ? "text" : "password"}
-            value={newFaculty.password}
-            onChange={handleInputChange}
-            margin="dense"
-            InputProps={{
-              readOnly: true,
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton onClick={togglePasswordVisibility} edge="end">
-                    {showPassword ? <VisibilityOff /> : <Visibility />}
-                  </IconButton>
-                </InputAdornment>
-              ),
-            }}
-          />
-          <FormControl fullWidth margin="dense">
-            <InputLabel>Role</InputLabel>
-            <Select
-              value={newFaculty.role}
-              onChange={handleRoleChange}
-              label="Role"
-              name="role"
-            >
-              <MenuItem value="instructor">Instructor</MenuItem>
-              <MenuItem value="program chairperson">
-                Program Chairperson
-              </MenuItem>
-              {/* Add more roles if needed */}
-            </Select>
-          </FormControl>
+<Dialog open={openModal} onClose={handleCloseModal}>
+  <DialogTitle>Add Faculty Account</DialogTitle>
+  <DialogContent>
+    <TextField
+      fullWidth
+      label="Last Name"
+      name="last_name"
+      value={newFaculty.last_name}
+      onChange={handleInputChange}
+      margin="dense"
+    />
+    <TextField
+      fullWidth
+      label="First Name"
+      name="first_name"
+      value={newFaculty.first_name}
+      onChange={handleInputChange}
+      margin="dense"
+    />
+    <TextField
+      fullWidth
+      label="Middle Name"
+      name="middle_name"
+      value={newFaculty.middle_name}
+      onChange={handleInputChange}
+      margin="dense"
+    />
+    <TextField
+      label="Username"
+      name="username"
+      value={newFaculty.username}
+      fullWidth
+      margin="normal"
+      InputProps={{
+        readOnly: true,
+      }}
+    />
 
-          <Autocomplete
-            options={courses.map((course) => course.code)}
-            getOptionLabel={(option) => option}
-            value={newFaculty.course || null}
-            onChange={(_, newValue) => {
-              setNewFaculty((prev) => ({ ...prev, course: newValue || "" }));
-            }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Select Course Code"
-                variant="outlined"
-                size="small"
-              />
-            )}
-            sx={{ width: 250 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseModal}>Cancel</Button>
-          <Button
-            onClick={handleAddAccount}
-            variant="contained"
-            color="primary"
-          >
-            Add
-          </Button>
-        </DialogActions>
-      </Dialog>
+    <TextField
+      fullWidth
+      label="Email"
+      name="email"
+      value={newFaculty.email}
+      onChange={handleInputChange}
+      margin="dense"
+    />
+    <TextField
+      fullWidth
+      label="Password"
+      name="password"
+      type={showPassword ? "text" : "password"}
+      value={newFaculty.password}
+      onChange={handleInputChange}
+      margin="dense"
+      InputProps={{
+        readOnly: true,
+        endAdornment: (
+          <InputAdornment position="end">
+            <IconButton onClick={togglePasswordVisibility} edge="end">
+              {showPassword ? <VisibilityOff /> : <Visibility />}
+            </IconButton>
+          </InputAdornment>
+        ),
+      }}
+    />
+    <FormControl fullWidth margin="dense">
+      <InputLabel>Role</InputLabel>
+      <Select
+        value={newFaculty.role}
+        onChange={handleRoleChange}
+        label="Role"
+        name="role"
+      >
+        <MenuItem value="instructor">Instructor</MenuItem>
+        <MenuItem value="programchairperson">
+          Program Chairperson
+        </MenuItem>
+        {/* Add more roles if needed */}
+      </Select>
+    </FormControl>
+
+    {/* SINGLE-LINE AUTOCOMPLETE — options & value are uppercased */}
+    <Autocomplete
+      options={courses.map((course) => (course?.code ?? "").toUpperCase())}
+      getOptionLabel={(option) => option}
+      value={newFaculty.course ? String(newFaculty.course).toUpperCase() : null}
+      onChange={(_, newValue) => {
+        setNewFaculty((prev) => ({ ...prev, course: newValue ? String(newValue).toUpperCase() : "" }));
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label="Select Course Code"
+          variant="outlined"
+          size="small"
+          fullWidth
+          margin="dense"
+          InputProps={{
+            ...params.InputProps,
+            // ensure the input text is uppercase visually (also helps if user types)
+            inputProps: {
+              ...params.inputProps,
+              style: { textTransform: "uppercase" },
+            },
+          }}
+        />
+      )}
+      // keep it single-line and full width; no fixed width
+      freeSolo={false}
+      disableClearable={false}
+      sx={{ mt: 1 }}
+    />
+  </DialogContent>
+  <DialogActions>
+    <Button onClick={handleCloseModal}>Cancel</Button>
+    <Button
+      onClick={handleAddAccount}
+      variant="contained"
+      color="primary"
+    >
+      Add
+    </Button>
+  </DialogActions>
+</Dialog>
+
     </DeanMain>
   );
 };
