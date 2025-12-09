@@ -25,7 +25,20 @@ import {
   DialogContent,
   DialogActions,
 } from "@mui/material";
-import { Add, Edit, Delete, Layers } from "@mui/icons-material";
+import { 
+  Add, 
+  Edit, 
+  Delete, 
+  Layers, 
+  Search, 
+  School, 
+  Class, 
+  Book,
+  Group,
+  Category,
+  Block as BlockIcon,
+  Article
+} from "@mui/icons-material";
 import AdminMain from "./AdminMain";
 
 type Section = {
@@ -334,7 +347,7 @@ const CourseBlockManagement: React.FC = () => {
     }
   };
 
-  // Delete subject -> DELETE /subjects-it/:id (unchanged)
+  // Delete subject -> DELETE /subjects-it/:id
   const handleDeleteSubject = async (subject: Subject): Promise<void> => {
     if (!subject._id) {
       showSnack("Cannot delete: server id missing. Try refreshing the list.", "warning");
@@ -703,9 +716,6 @@ const handleSaveEdit = async () => {
       return;
     }
 
-    const ok = window.confirm(`Delete section "${sec.section ?? ""}"? This cannot be undone.`);
-    if (!ok) return;
-
     // id is now a string (not undefined)
     setDeletingSectionId(id);
     const prev = sections;
@@ -734,116 +744,221 @@ const handleSaveEdit = async () => {
 
   return (
     <AdminMain>
-      <Box sx={{ p: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1.5 }}>
-          <Layers sx={{ fontSize: 36 }} />
-          <Typography variant="h4" component="h1">
-            Section & Subject Management
-          </Typography>
-        </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Manage sections/blocks on the left and subjects on the right. Search, add, and edit quickly with the streamlined layout.
-        </Typography>
+      <Box sx={{ p: { xs: 2, sm: 3 }, minHeight: "100vh" }}>
+        {/* Header Section */}
+        <Box 
+          sx={{ 
+            mb: 4,
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
+            <Box
+              sx={{
+                p: 1.5,
+                borderRadius: 2,
+                bgcolor: "primary.main",
+                color: "white",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Layers sx={{ fontSize: 32 }} />
+            </Box>
+            <Box>
+              <Typography variant="h4" component="h1" sx={{ fontWeight: 700, color: "#1a1a1a" }}>
+                Course & Block Management
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Manage sections, blocks, and subjects for your course
+              </Typography>
+            </Box>
+          </Stack>
+          
+          {/* Course Display Badge */}
+          {courseStored && (
+            <Box
+              sx={{
+                mt: 2,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 1,
+                px: 2,
+                py: 1,
+                borderRadius: 2,
+                bgcolor: "#f1f3f4",
+                color: "#1a1a1a",
+              }}
+            >
+              <School fontSize="small" />
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                Current Course: <strong>{courseStored.toUpperCase()}</strong>
+              </Typography>
+            </Box>
+          )}
+        </Box>
 
         <Grid container spacing={3}>
           {/* Left: Sections */}
           <Grid item xs={12} md={6}>
-            <Card
-              sx={{
-                height: "100%",
-                display: "flex",
+            <Card 
+              sx={{ 
+                height: "100%", 
+                display: "flex", 
                 flexDirection: "column",
-                border: "1px solid",
-                borderColor: "divider",
-                boxShadow: "0px 6px 18px rgba(0,0,0,0.06)",
-                borderRadius: 2,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                borderRadius: 3,
+                overflow: "hidden",
+                backgroundColor: "#fff",
               }}
             >
-              <CardContent>
-                <Typography variant="h6" gutterBottom fontWeight={600}>
-                  Sections
+              <Box
+                sx={{
+                  backgroundColor: "#fff",
+                  p: 2,
+                  borderBottom: "1px solid #e0e0e0",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
+                <Group sx={{ fontSize: 28, color: "#1a1a1a" }} />
+                <Typography variant="h6" sx={{ fontWeight: 700, color: "#1a1a1a" }}>
+                  Sections & Blocks
                 </Typography>
+              </Box>
+              <CardContent sx={{ flexGrow: 1, display: "flex", flexDirection: "column", p: 3 }}>
 
-                {/* One-line search bar (replaces previous course-code + Load button) */}
-                <Box sx={{ mb: 2 }}>
+                {/* Search bar */}
+                <Box sx={{ mb: 3 }}>
                   <TextField
                     fullWidth
                     size="small"
                     placeholder="Search sections by section, block, or course..."
                     value={sectionsSearch}
                     onChange={(e) => setSectionsSearch(e.target.value)}
-                    InputProps={{ "aria-label": "search-sections" }}
+                    InputProps={{
+                      startAdornment: <Search sx={{ mr: 1, color: "text.secondary" }} />,
+                      sx: { borderRadius: 2 },
+                    }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        "&:hover fieldset": {
+                          borderColor: "primary.main",
+                        },
+                      },
+                    }}
                   />
-                  <Typography variant="caption" color="text.secondary">
-                    Tip: Type any keyword (course / section / block) to filter instantly.
-                  </Typography>
                 </Box>
 
-                {/* Row: readonly course (from localStorage) | section input | block input | add button */}
-                <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                  <Grid item xs={12} sm={5}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Course"
-                      value={(courseStored ?? "").toUpperCase()}
-                      placeholder="No course in localStorage"
-                      InputProps={{ readOnly: true }}
-                    />
-                  </Grid>
-
-                  <Grid item xs={6} sm={3}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Section"
-                      value={newSection}
-                      onChange={(e) => setNewSection(e.target.value)}
-                      placeholder="e.g. 1"
-                    />
-                  </Grid>
-
-                  <Grid item xs={4} sm={2}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Block"
-                      value={newBlock}
-                      onChange={(e) => setNewBlock(e.target.value)}
-                      placeholder="e.g. B"
-                    />
-                  </Grid>
-
-                  <Grid item xs={2} sm={2}>
-                    <Button
-                      variant="contained"
-                      fullWidth
-                      startIcon={<Add />}
-                      onClick={handleAddSection}
-                      disabled={addingSection}
-                    >
-                      {addingSection ? "Adding..." : "Add"}
-                    </Button>
-                  </Grid>
-                </Grid>
-
-                <TableContainer
-                  component={Paper}
-                  variant="outlined"
+                {/* Add Section Form */}
+                <Paper
+                  elevation={0}
                   sx={{
-                    maxHeight: 440,
+                    p: 2.5,
+                    mb: 3,
+                    bgcolor: "grey.50",
                     borderRadius: 2,
-                    overflow: "hidden",
+                    border: "1px solid",
                     borderColor: "divider",
-                    boxShadow: "none",
+                  }}
+                >
+                  <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600, color: "text.secondary" }}>
+                    Add New Section
+                  </Typography>
+                  <Grid container spacing={2} alignItems="flex-end">
+                    <Grid item xs={12} sm={4}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Section"
+                        value={newSection}
+                        onChange={(e) => setNewSection(e.target.value)}
+                        placeholder="e.g. 1"
+                        InputProps={{
+                          startAdornment: <Class sx={{ mr: 1, color: "text.secondary", fontSize: 20 }} />,
+                        }}
+                        sx={{
+                          "& .MuiOutlinedInput-root": {
+                            bgcolor: "white",
+                          },
+                        }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={12} sm={4}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Block"
+                        value={newBlock}
+                        onChange={(e) => setNewBlock(e.target.value)}
+                        placeholder="e.g. B"
+                        InputProps={{
+                          startAdornment: <BlockIcon sx={{ mr: 1, color: "text.secondary", fontSize: 20 }} />,
+                        }}
+                        sx={{
+                          "& .MuiOutlinedInput-root": {
+                            bgcolor: "white",
+                          },
+                        }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={12} sm={4}>
+                      <Button
+                        variant="contained"
+                        fullWidth
+                        startIcon={<Add />}
+                        onClick={handleAddSection}
+                        disabled={addingSection}
+                        sx={{
+                          py: 1.2,
+                          borderRadius: 2,
+                          textTransform: "none",
+                          fontWeight: 600,
+                          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                          "&:hover": {
+                            boxShadow: "0 4px 8px rgba(0,0,0,0.15)",
+                          },
+                        }}
+                      >
+                        {addingSection ? "Adding..." : "Add Section"}
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </Paper>
+
+                <TableContainer 
+                  component={Paper} 
+                  variant="outlined" 
+                  sx={{ 
+                    maxHeight: 420,
+                    borderRadius: 2,
+                    border: "1px solid",
+                    borderColor: "divider",
                   }}
                 >
                   <Table stickyHeader size="small">
                     <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Section</TableCell>
-                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Block</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>
+                      <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                        <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Class fontSize="small" />
+                            <span>Section</span>
+                          </Stack>
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <BlockIcon fontSize="small" />
+                            <span>Block</span>
+                          </Stack>
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
                           Actions
                         </TableCell>
                       </TableRow>
@@ -859,27 +974,84 @@ const handleSaveEdit = async () => {
                       ) : filteredSections.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={3} align="center" sx={{ py: 6 }}>
-                            No sections found. {courseStored ? "Use the Add button to add one." : "No stored course to load sections."}
+                            <Stack spacing={1} alignItems="center">
+                              <Group sx={{ fontSize: 48, color: "text.secondary", opacity: 0.5 }} />
+                              <Typography variant="body2" color="text.secondary">
+                                {sectionsSearch 
+                                  ? "No sections match your search." 
+                                  : courseStored 
+                                    ? "No sections found. Use the form above to add one." 
+                                    : "No stored course to load sections."}
+                              </Typography>
+                            </Stack>
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredSections.map((sec) => (
-                          <TableRow key={sec._id ?? `${sec.course}-${sec.section}`} hover>
-                            <TableCell>{sec.section ?? "—"}</TableCell>
-                            <TableCell>{sec.block ?? "—"}</TableCell>
+                        filteredSections.map((sec, idx) => (
+                          <TableRow 
+                            key={sec._id ?? `${sec.course}-${sec.section}`} 
+                            hover
+                            sx={{
+                              backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
+                              transition: "background-color 0.2s ease",
+                              "&:hover": {
+                                backgroundColor: "#f1f3f4",
+                              },
+                            }}
+                          >
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                {sec.section ?? "—"}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              {sec.block ? (
+                                <Box
+                                  sx={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    px: 1.5,
+                                    py: 0.5,
+                                    borderRadius: 1,
+                                    bgcolor: "#f1f3f4",
+                                    color: "#1a1a1a",
+                                    fontWeight: 600,
+                                    fontSize: "0.75rem",
+                                  }}
+                                >
+                                  {sec.block}
+                                </Box>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  —
+                                </Typography>
+                              )}
+                            </TableCell>
                             <TableCell align="right">
-                              <IconButton size="small" onClick={() => openEditSectionDialog(sec)} disabled={editSectionSaving}>
-                                <Edit fontSize="small" />
-                              </IconButton>
-
-                              <IconButton
-                                size="small"
-                                onClick={() => handleDeleteSection(sec)}
-                                sx={{ ml: 1 }}
-                                disabled={deletingSectionId === sec._id}
-                              >
-                                <Delete fontSize="small" />
-                              </IconButton>
+                              <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                <IconButton 
+                                  size="small" 
+                                  onClick={() => openEditSectionDialog(sec)} 
+                                  disabled={editSectionSaving}
+                                  sx={{
+                                    color: "#1a1a1a",
+                                    "&:hover": { bgcolor: "#f1f3f4", color: "#1a1a1a" },
+                                  }}
+                                >
+                                  <Edit fontSize="small" />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleDeleteSection(sec)}
+                                  disabled={deletingSectionId === sec._id}
+                                  sx={{
+                                    color: "error.main",
+                                    "&:hover": { bgcolor: "error.light", color: "error.dark" },
+                                  }}
+                                >
+                                  <Delete fontSize="small" />
+                                </IconButton>
+                              </Stack>
                             </TableCell>
                           </TableRow>
                         ))
@@ -893,82 +1065,158 @@ const handleSaveEdit = async () => {
 
           {/* Right: Subjects */}
           <Grid item xs={12} md={6}>
-            <Card
-              sx={{
-                height: "100%",
-                display: "flex",
+            <Card 
+              sx={{ 
+                height: "100%", 
+                display: "flex", 
                 flexDirection: "column",
-                border: "1px solid",
-                borderColor: "divider",
-                boxShadow: "0px 6px 18px rgba(0,0,0,0.06)",
-                borderRadius: 2,
+                boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+                borderRadius: 3,
+                overflow: "hidden",
+                backgroundColor: "#fff",
               }}
             >
-              <CardContent>
-                <Typography variant="h6" gutterBottom fontWeight={600}>
+              <Box
+                sx={{
+                  backgroundColor: "#fff",
+                  p: 2,
+                  borderBottom: "1px solid #e0e0e0",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
+                <Book sx={{ fontSize: 28, color: "#1a1a1a" }} />
+                <Typography variant="h6" sx={{ fontWeight: 700, color: "#1a1a1a" }}>
                   Subjects
                 </Typography>
-
+              </Box>
+              <CardContent sx={{ flexGrow: 1, display: "flex", flexDirection: "column", p: 3 }}>
                 {/* Search bar */}
-                <Box sx={{ mb: 2 }}>
+                <Box sx={{ mb: 3 }}>
                   <TextField
                     fullWidth
                     size="small"
                     placeholder="Search subjects by code or name..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    InputProps={{ "aria-label": "search-subjects" }}
+                    InputProps={{
+                      startAdornment: <Search sx={{ mr: 1, color: "text.secondary" }} />,
+                      sx: { borderRadius: 2 },
+                    }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        "&:hover fieldset": {
+                          borderColor: "primary.main",
+                        },
+                      },
+                    }}
                   />
                 </Box>
 
-                {/* Inputs: Subject Code | Subject Name + Add button */}
-                <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                  <Grid item xs={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Subject Code"
-                      value={subjectCode}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubjectCode(e.target.value)}
-                      placeholder="e.g. IT 101"
-                    />
-                  </Grid>
-
-                  <Grid item xs={6}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Subject Name"
-                      value={subjectName}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubjectName(e.target.value)}
-                      placeholder="e.g. Introduction to Information Technology"
-                    />
-                  </Grid>
-
-                  <Grid item xs={2}>
-                    <Button variant="contained" fullWidth startIcon={<Add />} onClick={handleAddSubject}>
-                      Add
-                    </Button>
-                  </Grid>
-                </Grid>
-
-                <TableContainer
-                  component={Paper}
-                  variant="outlined"
+                {/* Add Subject Form */}
+                <Paper
+                  elevation={0}
                   sx={{
-                    maxHeight: 440,
+                    p: 2.5,
+                    mb: 3,
+                    bgcolor: "#fafafa",
                     borderRadius: 2,
-                    overflow: "hidden",
+                    border: "1px solid",
+                    borderColor: "#e0e0e0",
+                  }}
+                >
+                  <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600, color: "text.secondary" }}>
+                    Add New Subject
+                  </Typography>
+                  <Grid container spacing={2} alignItems="flex-end">
+                    <Grid item xs={12} sm={5}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Subject Code"
+                        value={subjectCode}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubjectCode(e.target.value)}
+                        placeholder="e.g. IT 101"
+                        InputProps={{
+                          startAdornment: <Article sx={{ mr: 1, color: "text.secondary", fontSize: 20 }} />,
+                        }}
+                        sx={{
+                          "& .MuiOutlinedInput-root": {
+                            bgcolor: "white",
+                          },
+                        }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={12} sm={5}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Subject Name"
+                        value={subjectName}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubjectName(e.target.value)}
+                        placeholder="e.g. Introduction to IT"
+                        InputProps={{
+                          startAdornment: <Category sx={{ mr: 1, color: "text.secondary", fontSize: 20 }} />,
+                        }}
+                        sx={{
+                          "& .MuiOutlinedInput-root": {
+                            bgcolor: "white",
+                          },
+                        }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={12} sm={2}>
+                      <Button 
+                        variant="contained" 
+                        fullWidth 
+                        startIcon={<Add />} 
+                        onClick={handleAddSubject}
+                        sx={{
+                          py: 1.2,
+                          borderRadius: 2,
+                          textTransform: "none",
+                          fontWeight: 600,
+                          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                          "&:hover": {
+                            boxShadow: "0 4px 8px rgba(0,0,0,0.15)",
+                          },
+                        }}
+                      >
+                        Add
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </Paper>
+
+                <TableContainer 
+                  component={Paper} 
+                  variant="outlined" 
+                  sx={{ 
+                    maxHeight: 420,
+                    borderRadius: 2,
+                    border: "1px solid",
                     borderColor: "divider",
-                    boxShadow: "none",
                   }}
                 >
                   <Table stickyHeader size="small">
                     <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Code</TableCell>
-                        <TableCell sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>Subject</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 600, backgroundColor: "grey.100" }}>
+                      <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                        <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Article fontSize="small" />
+                            <span>Code</span>
+                          </Stack>
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Category fontSize="small" />
+                            <span>Subject</span>
+                          </Stack>
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
                           Actions
                         </TableCell>
                       </TableRow>
@@ -984,25 +1232,74 @@ const handleSaveEdit = async () => {
                       ) : filteredSubjects.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={3} align="center" sx={{ py: 6 }}>
-                            No subjects found.
+                            <Stack spacing={1} alignItems="center">
+                              <Book sx={{ fontSize: 48, color: "text.secondary", opacity: 0.5 }} />
+                              <Typography variant="body2" color="text.secondary">
+                                {searchTerm 
+                                  ? "No subjects match your search." 
+                                  : "No subjects found. Use the form above to add one."}
+                              </Typography>
+                            </Stack>
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredSubjects.map((s) => (
-                          <TableRow key={s._id ?? s.id} hover>
-                            <TableCell>{s.code}</TableCell>
-                            <TableCell>{s.name}</TableCell>
-                            <TableCell align="right">
-                              <IconButton size="small" onClick={() => openEditDialog(s)}>
-                                <Edit fontSize="small" />
-                              </IconButton>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleDeleteSubject(s)}
-                                sx={{ ml: 1 }}
+                        filteredSubjects.map((s, idx) => (
+                          <TableRow 
+                            key={s._id ?? s.id} 
+                            hover
+                            sx={{
+                              backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
+                              transition: "background-color 0.2s ease",
+                              "&:hover": {
+                                backgroundColor: "#f1f3f4",
+                              },
+                            }}
+                          >
+                            <TableCell>
+                              <Box
+                                sx={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  px: 1.5,
+                                  py: 0.5,
+                                  borderRadius: 1,
+                                  bgcolor: "#f1f3f4",
+                                  color: "#1a1a1a",
+                                  fontWeight: 600,
+                                  fontSize: "0.75rem",
+                                }}
                               >
-                                <Delete fontSize="small" />
-                              </IconButton>
+                                {s.code}
+                              </Box>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                {s.name}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                <IconButton 
+                                  size="small" 
+                                  onClick={() => openEditDialog(s)}
+                                  sx={{
+                                    color: "#1a1a1a",
+                                    "&:hover": { bgcolor: "#f1f3f4", color: "#1a1a1a" },
+                                  }}
+                                >
+                                  <Edit fontSize="small" />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleDeleteSubject(s)}
+                                  sx={{
+                                    color: "error.main",
+                                    "&:hover": { bgcolor: "error.light", color: "error.dark" },
+                                  }}
+                                >
+                                  <Delete fontSize="small" />
+                                </IconButton>
+                              </Stack>
                             </TableCell>
                           </TableRow>
                         ))
@@ -1016,8 +1313,21 @@ const handleSaveEdit = async () => {
         </Grid>
 
         {/* Edit Subject Dialog */}
-        <Dialog open={editDialogOpen} onClose={closeEditDialog} fullWidth maxWidth="sm">
-          <DialogTitle>Edit Subject</DialogTitle>
+        <Dialog 
+          open={editDialogOpen} 
+          onClose={closeEditDialog} 
+          fullWidth 
+          maxWidth="sm"
+          PaperProps={{
+            sx: { borderRadius: 3 }
+          }}
+        >
+          <DialogTitle sx={{ backgroundColor: "#fff", color: "#1a1a1a", fontWeight: 700, borderBottom: "1px solid #e0e0e0" }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Edit sx={{ color: "#1a1a1a" }} />
+              <span>Edit Subject</span>
+            </Stack>
+          </DialogTitle>
           <DialogContent>
             <TextField
               margin="dense"
@@ -1045,8 +1355,21 @@ const handleSaveEdit = async () => {
         </Dialog>
 
         {/* Edit Section Dialog */}
-        <Dialog open={editSectionDialogOpen} onClose={closeEditSectionDialog} fullWidth maxWidth="xs">
-          <DialogTitle>Edit Section</DialogTitle>
+        <Dialog 
+          open={editSectionDialogOpen} 
+          onClose={closeEditSectionDialog} 
+          fullWidth 
+          maxWidth="xs"
+          PaperProps={{
+            sx: { borderRadius: 3 }
+          }}
+        >
+          <DialogTitle sx={{ backgroundColor: "#fff", color: "#1a1a1a", fontWeight: 700, borderBottom: "1px solid #e0e0e0" }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Edit sx={{ color: "#1a1a1a" }} />
+              <span>Edit Section</span>
+            </Stack>
+          </DialogTitle>
           <DialogContent>
             <TextField
               margin="dense"

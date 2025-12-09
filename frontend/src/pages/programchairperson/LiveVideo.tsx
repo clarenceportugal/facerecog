@@ -99,20 +99,9 @@ const LiveVideo: React.FC = () => {
       }));
     };
 
-    // ⚡ FRAME THROTTLING: Prevent frame queue buildup that causes stuttering
-    let lastFrameTime = 0;
-    const MIN_FRAME_INTERVAL = 16; // ~60 FPS max (16ms = 60fps)
-    
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
         try {
-          const now = performance.now();
-          // Skip frames that arrive too quickly to prevent stuttering
-          if (now - lastFrameTime < MIN_FRAME_INTERVAL) {
-            return; // Drop frame to prevent queue buildup
-          }
-          lastFrameTime = now;
-          
           const buffer = new Uint8Array(event.data);
           const metadataLen = new DataView(buffer.buffer).getUint32(0, false);
           const metadataBytes = buffer.slice(4, 4 + metadataLen);
@@ -130,12 +119,8 @@ const LiveVideo: React.FC = () => {
               const oldSrc = imgRef.current.src;
               // ⚡ MEMORY OPTIMIZATION: Revoke old URL immediately to free memory
               if (oldSrc && oldSrc.startsWith('blob:')) {
-                // Use requestIdleCallback with fallback to setTimeout to prevent memory buildup
-                if (window.requestIdleCallback) {
-                  requestIdleCallback(() => URL.revokeObjectURL(oldSrc), { timeout: 100 });
-                } else {
-                  setTimeout(() => URL.revokeObjectURL(oldSrc), 0);
-                }
+                // Use setTimeout to ensure old URL is revoked after new one is set
+                setTimeout(() => URL.revokeObjectURL(oldSrc), 0);
               }
               imgRef.current.src = url;
             } else {
@@ -146,39 +131,39 @@ const LiveVideo: React.FC = () => {
             // ⚡ PRIORITY 2: Process face data (non-blocking, in next frame)
             requestAnimationFrame(() => {
               // Handle events
-              if (metadata.events && metadata.events.length > 0) {
+            if (metadata.events && metadata.events.length > 0) {
                 const newLogs: DetectionLog[] = [];
-                metadata.events.forEach((event: any) => {
-                  const hasSchedule = event.has_schedule === true || (event.schedule !== null && event.schedule !== undefined);
-                  const isValidSchedule = event.is_valid_schedule !== undefined 
-                    ? event.is_valid_schedule 
-                    : (hasSchedule && event.schedule?.isValidSchedule !== false);
-                  
-                  const eventLog: DetectionLog = {
-                    id: `event-${Date.now()}-${Math.random()}`,
-                    name: event.name,
-                    timestamp: new Date(event.left_at || event.returned_at || event.timestamp || new Date()),
-                    cameraName: currentCameraName,
-                    type: event.type,
-                    totalMinutes: event.total_minutes,
-                    absenceMinutes: event.absence_minutes,
-                    details: "",
-                    has_schedule: hasSchedule,
-                    is_valid_schedule: isValidSchedule
-                  };
+              metadata.events.forEach((event: any) => {
+                const hasSchedule = event.has_schedule === true || (event.schedule !== null && event.schedule !== undefined);
+                const isValidSchedule = event.is_valid_schedule !== undefined 
+                  ? event.is_valid_schedule 
+                  : (hasSchedule && event.schedule?.isValidSchedule !== false);
+                
+                const eventLog: DetectionLog = {
+                  id: `event-${Date.now()}-${Math.random()}`,
+                  name: event.name,
+                  timestamp: new Date(event.left_at || event.returned_at || event.timestamp || new Date()),
+                  cameraName: currentCameraName,
+                  type: event.type,
+                  totalMinutes: event.total_minutes,
+                  absenceMinutes: event.absence_minutes,
+                  details: "",
+                  has_schedule: hasSchedule,
+                  is_valid_schedule: isValidSchedule
+                };
 
-                  if (event.type === 'time_in') {
-                    eventLog.details = `⏰ TIME IN logged - ${event.schedule?.courseCode || 'N/A'} (${event.schedule?.room || 'N/A'})`;
-                  } else if (event.type === 'time_out') {
-                    eventLog.details = `🚪 TIME OUT logged - Total: ${event.total_minutes} min | ${event.schedule?.courseCode || 'N/A'}`;
-                  } else if (event.type === 'left') {
-                    eventLog.details = `Left after being absent for 5 minutes. Total time present: ${event.total_minutes} min`;
-                  } else if (event.type === 'returned') {
-                    eventLog.details = `Returned after ${event.absence_minutes} minutes away`;
-                  } else if (event.type === 'first_detected') {
-                    eventLog.details = 'First time detected in this session';
-                  } else if (event.type === 'detected_no_schedule') {
-                    eventLog.details = 'Detected without scheduled class';
+                if (event.type === 'time_in') {
+                  eventLog.details = `⏰ TIME IN logged - ${event.schedule?.courseCode || 'N/A'} (${event.schedule?.room || 'N/A'})`;
+                } else if (event.type === 'time_out') {
+                  eventLog.details = `🚪 TIME OUT logged - Total: ${event.total_minutes} min | ${event.schedule?.courseCode || 'N/A'}`;
+                } else if (event.type === 'left') {
+                  eventLog.details = `Left after being absent for 5 minutes. Total time present: ${event.total_minutes} min`;
+                } else if (event.type === 'returned') {
+                  eventLog.details = `Returned after ${event.absence_minutes} minutes away`;
+                } else if (event.type === 'first_detected') {
+                  eventLog.details = 'First time detected in this session';
+                } else if (event.type === 'detected_no_schedule') {
+                  eventLog.details = 'Detected without scheduled class';
                   }
 
                   newLogs.push(eventLog);
@@ -198,40 +183,40 @@ const LiveVideo: React.FC = () => {
               }
               
               // ⚡ OPTIMIZATION: Update face data in ref (no re-render)
-              const rawDetections = metadata.faces || [];
+            const rawDetections = metadata.faces || [];
               const frameWidth = metadata.frame_width || 1920;
               const frameHeight = metadata.frame_height || 1080;
-              
+            
               // Store metadata
               frameMetadataRef.current = { width: frameWidth, height: frameHeight };
-              
+            
               // ⚡ FIX: Define scaledDetections in outer scope so it's accessible everywhere
               let scaledDetections: FaceDetection[] = [];
               
               // Scale boxes to match displayed video size
               if (imgRef.current && rawDetections.length > 0) {
-                const displayWidth = imgRef.current.naturalWidth || frameWidth;
-                const displayHeight = imgRef.current.naturalHeight || frameHeight;
-                
-                const scaleX = displayWidth / frameWidth;
-                const scaleY = displayHeight / frameHeight;
-                
+              const displayWidth = imgRef.current.naturalWidth || frameWidth;
+              const displayHeight = imgRef.current.naturalHeight || frameHeight;
+              
+              const scaleX = displayWidth / frameWidth;
+              const scaleY = displayHeight / frameHeight;
+              
                 scaledDetections = rawDetections.map((face: FaceDetection) => {
-                  const [x, y, w, h] = face.box;
-                  return {
-                    ...face,
+              const [x, y, w, h] = face.box;
+              return {
+                ...face,
                     // ⚡ EXPLICIT: Preserve schedule status for box coloring
                     has_schedule: face.has_schedule,
                     is_valid_schedule: face.is_valid_schedule,
-                    box: [
-                      Math.round(x * scaleX),
-                      Math.round(y * scaleY),
-                      Math.round(w * scaleX),
-                      Math.round(h * scaleY)
-                    ] as [number, number, number, number]
-                  };
-                });
-                
+                box: [
+                  Math.round(x * scaleX),
+                  Math.round(y * scaleY),
+                  Math.round(w * scaleX),
+                  Math.round(h * scaleY)
+                ] as [number, number, number, number]
+              };
+            });
+            
                 // ⚡ CRITICAL: Update ref immediately (no re-render, no lag)
                 facesDataRef.current = scaledDetections;
                 
@@ -243,7 +228,7 @@ const LiveVideo: React.FC = () => {
                   }
                   return prevFaces; // No change - prevents re-render
                 });
-              } else {
+            } else {
                 facesDataRef.current = [];
                 setFaces(prevFaces => {
                   if (prevFaces.length > 0) {
@@ -258,7 +243,7 @@ const LiveVideo: React.FC = () => {
               const currentNames = new Set<string>(
                 scaledDetections.map((f: FaceDetection) => f.name || "Unknown")
               );
-              
+
               // Process people without schedules
               const noScheduleLogs: DetectionLog[] = [];
               
@@ -284,7 +269,7 @@ const LiveVideo: React.FC = () => {
                       leftAt: null,
                     };
                     noScheduleSessionsRef.current.set(name, session);
-                    
+                
                     // Log TIME IN for person without schedule
                     noScheduleLogs.push({
                       id: `time-in-no-sched-${now}-${Math.random()}`,
@@ -300,7 +285,7 @@ const LiveVideo: React.FC = () => {
                     
                     session.timeInLogged = true;
                     console.log(`⏰ [NO SCHEDULE] TIME IN logged for ${name}`);
-                  } else {
+                } else {
                     // Update existing session
                     if (session.isPresent) {
                       // Update total time while present
@@ -324,7 +309,7 @@ const LiveVideo: React.FC = () => {
                         has_schedule: false,
                         is_valid_schedule: false,
                       });
-                      
+
                       // Reset leftAt since they've returned
                       session.leftAt = null;
                       console.log(`👋 [NO SCHEDULE] ${name} RETURNED after ${absenceMinutes} min`);
@@ -364,7 +349,7 @@ const LiveVideo: React.FC = () => {
                       
                       session.timeOutLogged = true;
                       console.log(`🚪 [NO SCHEDULE] TIME OUT logged for ${name} - Total: ${totalMinutes} min`);
-                    }
+                }
                   } else {
                     // Still within absence timeout - update total time while they're still considered present
                     session.totalTimeSeconds += (now - session.lastSeen) / 1000;
@@ -391,43 +376,43 @@ const LiveVideo: React.FC = () => {
                   }
                   return combined;
                 });
-              }
-              
-              // Log new face detections (not events) - with 2 minute throttling
+            }
+            
+            // Log new face detections (not events) - with 2 minute throttling
               if (scaledDetections.length > 0) {
-                const previousNames = lastDetectedNamesRef.current;
-                
-                // ⚡ OPTIMIZED: Batch process detection logs to reduce state updates
-                const logsToAdd: DetectionLog[] = [];
+              const previousNames = lastDetectedNamesRef.current;
+              
+              // ⚡ OPTIMIZED: Batch process detection logs to reduce state updates
+              const logsToAdd: DetectionLog[] = [];
                 scaledDetections.forEach((face: FaceDetection) => {
-                  const name = face.name || "Unknown";
-                  const lastLogTime = lastLogTimeRef.current.get(name) || 0;
-                  const timeSinceLastLog = now - lastLogTime;
-                  
-                  // Log if first time detected OR if 2 minutes have passed since last log
-                  if (!previousNames.has(name) || timeSinceLastLog >= DETECTION_LOG_INTERVAL_MS) {
-                    // ⚡ OPTIMIZED: Quick schedule check (cached)
-                    const hasSchedule = face.has_schedule === true || (face.session?.schedule != null);
-                    const isValidSchedule = face.is_valid_schedule ?? (hasSchedule && face.session?.schedule?.isValidSchedule !== false);
-                    
-                    logsToAdd.push({
-                      id: `${now}-${Math.random()}`,
-                      name: name,
-                      timestamp: new Date(now),
-                      cameraName: currentCameraName,
-                      score: face.score,
-                      type: 'detection',
-                      details: face.session ? `Total time: ${face.session.total_minutes.toFixed(1)} min` : undefined,
-                      has_schedule: hasSchedule,
-                      is_valid_schedule: isValidSchedule
-                    });
-                    
-                    lastLogTimeRef.current.set(name, now);
-                  }
-                });
+                const name = face.name || "Unknown";
+                const lastLogTime = lastLogTimeRef.current.get(name) || 0;
+                const timeSinceLastLog = now - lastLogTime;
                 
-                // ⚡ OPTIMIZED: Single state update for all logs
-                if (logsToAdd.length > 0) {
+                // Log if first time detected OR if 2 minutes have passed since last log
+                if (!previousNames.has(name) || timeSinceLastLog >= DETECTION_LOG_INTERVAL_MS) {
+                  // ⚡ OPTIMIZED: Quick schedule check (cached)
+                  const hasSchedule = face.has_schedule === true || (face.session?.schedule != null);
+                  const isValidSchedule = face.is_valid_schedule ?? (hasSchedule && face.session?.schedule?.isValidSchedule !== false);
+                  
+                  logsToAdd.push({
+                    id: `${now}-${Math.random()}`,
+                    name: name,
+                    timestamp: new Date(now),
+                    cameraName: currentCameraName,
+                    score: face.score,
+                    type: 'detection',
+                    details: face.session ? `Total time: ${face.session.total_minutes.toFixed(1)} min` : undefined,
+                    has_schedule: hasSchedule,
+                    is_valid_schedule: isValidSchedule
+                  });
+                  
+                  lastLogTimeRef.current.set(name, now);
+                }
+              });
+              
+              // ⚡ OPTIMIZED: Single state update for all logs
+              if (logsToAdd.length > 0) {
                   // ⚡ MEMORY OPTIMIZATION: Limit logs to prevent memory overflow
                   setDetectionLogs(prev => {
                     const combined = [...prev, ...logsToAdd];
@@ -436,9 +421,9 @@ const LiveVideo: React.FC = () => {
                     }
                     return combined;
                   });
-                }
-                
-                lastDetectedNamesRef.current = currentNames;
+              }
+              
+              lastDetectedNamesRef.current = currentNames;
               } else {
                 lastDetectedNamesRef.current.clear();
               }
@@ -587,7 +572,7 @@ const LiveVideo: React.FC = () => {
         for (let i = 0; i < currentFaces.length; i++) {
           const face = currentFaces[i];
           const [x, y, w, h] = face.box;
-          
+        
           // ⚡ FAST SCHEDULE CHECK: Simplified boolean logic
           // ⚡ ROOM VALIDATION: Only green if BOTH has schedule AND room matches (is_valid_schedule === true)
           const hasSchedule = face.has_schedule === true || (face.session?.schedule != null);
@@ -610,64 +595,64 @@ const LiveVideo: React.FC = () => {
           // ⚡ DIRECT PUSH: No intermediate checks
           if (isGreen) {
             greenBoxes.push(boxInfo);
-          } else {
+        } else {
             yellowBoxes.push(boxInfo);
+            }
           }
-        }
-        
+          
         // ⚡ BATCH RENDERING: Minimize context state changes
         // Draw all green boxes in batches (strokeStyle set once for all)
-        if (greenBoxes.length > 0) {
-          ctx.strokeStyle = GREEN_BOX;
+          if (greenBoxes.length > 0) {
+            ctx.strokeStyle = GREEN_BOX;
           ctx.beginPath(); // Begin path for all green boxes
           for (let i = 0; i < greenBoxes.length; i++) {
             const box = greenBoxes[i];
             ctx.rect(box.x, box.y, box.w, box.h);
-          }
+            }
           ctx.stroke(); // Stroke all at once
           
-          ctx.fillStyle = GREEN_BG;
+            ctx.fillStyle = GREEN_BG;
           for (let i = 0; i < greenBoxes.length; i++) {
             const box = greenBoxes[i];
             const labelY = (box.y - textHeight - padding) | 0;
             const labelW = (box.textWidth + padding * 2) | 0;
-            ctx.fillRect(box.x, labelY, labelW, textHeight + padding);
-          }
+                ctx.fillRect(box.x, labelY, labelW, textHeight + padding);
+              }
           
-          ctx.fillStyle = BLACK_TEXT;
+            ctx.fillStyle = BLACK_TEXT;
           for (let i = 0; i < greenBoxes.length; i++) {
             const box = greenBoxes[i];
             const labelY = (box.y - textHeight - padding) | 0;
-            ctx.fillText(box.name, box.x + padding, labelY + 2);
+                ctx.fillText(box.name, box.x + padding, labelY + 2);
+            }
           }
-        }
-        
+          
         // Draw all yellow boxes in batches
-        if (yellowBoxes.length > 0) {
-          ctx.strokeStyle = YELLOW_BOX;
+          if (yellowBoxes.length > 0) {
+            ctx.strokeStyle = YELLOW_BOX;
           ctx.beginPath(); // Begin path for all yellow boxes
           for (let i = 0; i < yellowBoxes.length; i++) {
             const box = yellowBoxes[i];
             ctx.rect(box.x, box.y, box.w, box.h);
-          }
+            }
           ctx.stroke(); // Stroke all at once
           
-          ctx.fillStyle = YELLOW_BG;
+            ctx.fillStyle = YELLOW_BG;
           for (let i = 0; i < yellowBoxes.length; i++) {
             const box = yellowBoxes[i];
             const labelY = (box.y - textHeight - padding) | 0;
             const labelW = (box.textWidth + padding * 2) | 0;
-            ctx.fillRect(box.x, labelY, labelW, textHeight + padding);
-          }
+                ctx.fillRect(box.x, labelY, labelW, textHeight + padding);
+              }
           
-          ctx.fillStyle = BLACK_TEXT;
+            ctx.fillStyle = BLACK_TEXT;
           for (let i = 0; i < yellowBoxes.length; i++) {
             const box = yellowBoxes[i];
             const labelY = (box.y - textHeight - padding) | 0;
-            ctx.fillText(box.name, box.x + padding, labelY + 2);
+                ctx.fillText(box.name, box.x + padding, labelY + 2);
+              }
           }
         }
-      }
 
       // ⚡ MAXIMUM FPS: No throttling - sync to display refresh rate
       animationFrameRef.current = requestAnimationFrame(animate);
@@ -806,13 +791,13 @@ const LiveVideo: React.FC = () => {
                   : "none",
               }}
             />
-            <Typography 
-              variant="body2" 
+          <Typography 
+            variant="body2" 
               color={connectionStatus.includes("Error") ? "error.main" : connectionStatus === "Disconnected" ? "#ff9800" : "success.main"} 
               fontWeight="500"
-            >
+          >
               {connectionStatus}
-            </Typography>
+          </Typography>
           </Box>
         </Box>
 
@@ -864,7 +849,7 @@ const LiveVideo: React.FC = () => {
           }}
         >
           <Typography variant="body2" component="span">
-            <strong>Detection:</strong> Logs every {DETECTION_LOG_INTERVAL_MS / 60000} minutes | <strong>Absence:</strong> Marked as "left" after {ABSENCE_TIMEOUT_SECONDS / 60} minutes
+          <strong>Detection:</strong> Logs every {DETECTION_LOG_INTERVAL_MS / 60000} minutes | <strong>Absence:</strong> Marked as "left" after {ABSENCE_TIMEOUT_SECONDS / 60} minutes
           </Typography>
         </Alert>
         <Box 
@@ -986,52 +971,52 @@ const LiveVideo: React.FC = () => {
             </Box>
           ) : null}
           
-          <img
-            ref={imgRef}
-            alt="Live Stream"
-            style={{
-              width: "100%",
-              height: "auto",
-              maxHeight: "85vh",
+        <img
+          ref={imgRef}
+          alt="Live Stream"
+          style={{
+            width: "100%",
+            height: "auto",
+            maxHeight: "85vh",
               objectFit: "contain",
               borderRadius: "8px",
               display: connectionStatus === "Disconnected" || connectionStatus.includes("Error") ? "none" : "block",
-            }}
-          />
+          }}
+        />
           
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
               height: "100%",
-              pointerEvents: "none",
+            pointerEvents: "none",
               borderRadius: "8px",
               display: connectionStatus === "Disconnected" || connectionStatus.includes("Error") ? "none" : "block",
-            }}
-          />
-          
-          {faces.length > 0 && (
-            <Box
-              sx={{
-                position: "absolute",
-                top: 16,
-                right: 16,
+          }}
+        />
+        
+        {faces.length > 0 && (
+          <Box
+            sx={{
+              position: "absolute",
+              top: 16,
+              right: 16,
                 backgroundColor: "rgba(0, 255, 0, 0.95)",
-                color: "#000",
+              color: "#000",
                 padding: "10px 20px",
                 borderRadius: "12px",
-                fontWeight: "bold",
+              fontWeight: "bold",
                 fontSize: "15px",
                 boxShadow: "0px 4px 12px rgba(0,255,0,0.3)",
                 zIndex: 10,
                 display: "flex",
                 alignItems: "center",
                 gap: 1,
-              }}
-            >
+            }}
+          >
               <Box
                 sx={{
                   width: "10px",
@@ -1041,9 +1026,9 @@ const LiveVideo: React.FC = () => {
                   animation: "pulse 2s infinite",
                 }}
               />
-              {faces.length} Face{faces.length !== 1 ? "s" : ""} Detected
-            </Box>
-          )}
+            {faces.length} Face{faces.length !== 1 ? "s" : ""} Detected
+          </Box>
+        )}
         </Box>
       </Box>
 
@@ -1147,7 +1132,7 @@ const LiveVideo: React.FC = () => {
               </Box>
               <Typography variant="body1" color="text.secondary" fontWeight="500">
                 No activity logged yet
-              </Typography>
+            </Typography>
               <Typography variant="body2" color="text.secondary" mt={0.5}>
                 Events will appear here when detected
               </Typography>

@@ -79,51 +79,14 @@ const TimeBreakdown: React.FC = React.memo(() => {
   const [editStatus, setEditStatus] = useState<string>("");
   const [editRemarks, setEditRemarks] = useState<string>("");
 
-  // Extract fetchTimeLogs so it can be called manually for refresh
-  const fetchTimeLogs = async () => {
-    try {
-      setLoading(true);
-      const courseName = localStorage.getItem("course");
-      console.log(`[TimeBreakdown] Fetching logs for course: "${courseName}"`);
-      
-      // If no course name, fetch all logs
-      const requestBody = courseName ? { CourseName: courseName } : {};
-      console.log(`[TimeBreakdown] Request body:`, requestBody);
-
-      const response = await axios.post(
-        "http://localhost:5000/api/auth/show-monthly-department-logs",
-        requestBody
-      );
-
-      console.log(`[TimeBreakdown] ✅ Received ${response.data.count} logs`);
-      console.log(`[TimeBreakdown] Raw response:`, response.data);
-
-      if (!response.data.data || response.data.data.length === 0) {
-        console.warn(`[TimeBreakdown] ⚠️ No logs found in response`);
-        setLogs([]);
-        return;
-      }
-
-      const formattedLogs: TimeLog[] = response.data.data
+  // Helper function to format logs from API response
+  const formatLogs = (data: any[]): TimeLog[] => {
+    return data
         .filter((log: any) => {
           // Filter out logs with null/undefined schedules to avoid "Unknown" entries
-          // These are logs that couldn't be matched to new schedules during replacement
           return log.schedule !== null && log.schedule !== undefined;
         })
-        .map((log: any, index: number) => {
-          console.log(`[TimeBreakdown] Processing log ${index + 1}/${response.data.data.length}:`, {
-            _id: log._id,
-            course: log.course,
-            date: log.date,
-            timeIn: log.timeIn,
-            timeOut: log.timeout,
-            status: log.status,
-            hasSchedule: !!log.schedule,
-            scheduleType: typeof log.schedule,
-            hasInstructor: log.schedule?.instructor ? 'yes' : 'no',
-            instructorData: log.schedule?.instructor
-          });
-          
+      .map((log: any) => {
           // Get instructor name from schedule
           let instructorName = 'Unknown';
           if (log.schedule?.instructor) {
@@ -146,34 +109,140 @@ const TimeBreakdown: React.FC = React.memo(() => {
             remarks: log.remarks || '',
           };
         });
+  };
 
-      console.log(`[TimeBreakdown] ✅ Successfully formatted ${formattedLogs.length} logs`);
-      console.log(`[TimeBreakdown] Sample formatted log:`, formattedLogs[0]);
+  // Fetch and add only new logs (incremental update)
+  const fetchNewLogs = async () => {
+    try {
+      const courseName = localStorage.getItem("course");
+      const requestBody = courseName ? { CourseName: courseName } : {};
+
+      const response = await axios.post(
+        "http://localhost:5000/api/auth/show-monthly-department-logs",
+        requestBody
+      );
+
+      if (!response.data.data || response.data.data.length === 0) {
+        return; // No new data
+      }
+
+      const formattedLogs = formatLogs(response.data.data);
+      
+      // Merge new logs with existing logs (add new ones, update existing ones)
+      setLogs((prevLogs) => {
+        const existingIds = new Set(prevLogs.map(log => log._id));
+        const newLogs: TimeLog[] = [];
+        const updatedLogs: TimeLog[] = [...prevLogs];
+
+        formattedLogs.forEach((newLog) => {
+          if (!existingIds.has(newLog._id)) {
+            // New log - add it
+            newLogs.push(newLog);
+          } else {
+            // Existing log - update it (in case timeOut or status changed)
+            const index = updatedLogs.findIndex(log => log._id === newLog._id);
+            if (index !== -1) {
+              updatedLogs[index] = newLog;
+            }
+          }
+        });
+
+        // Sort by date (newest first) and return merged array
+        const merged = [...updatedLogs, ...newLogs];
+        merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        if (newLogs.length > 0) {
+          console.log(`[TimeBreakdown] ✅ Added ${newLogs.length} new log(s)`);
+        }
+        
+        return merged;
+      });
+    } catch (error: any) {
+      console.error("[TimeBreakdown] ❌ Error fetching new logs:", error);
+    }
+  };
+
+  // Full refresh (replaces all logs) - for manual refresh button
+  const fetchTimeLogs = async (replaceAll: boolean = true) => {
+    try {
+      setLoading(true);
+      const courseName = localStorage.getItem("course");
+      console.log(`[TimeBreakdown] Fetching logs for course: "${courseName}"`);
+      
+      const requestBody = courseName ? { CourseName: courseName } : {};
+
+      const response = await axios.post(
+        "http://localhost:5000/api/auth/show-monthly-department-logs",
+        requestBody
+      );
+
+      console.log(`[TimeBreakdown] ✅ Received ${response.data.count} logs`);
+
+      if (!response.data.data || response.data.data.length === 0) {
+        console.warn(`[TimeBreakdown] ⚠️ No logs found in response`);
+        if (replaceAll) {
+          setLogs([]);
+        }
+        return;
+      }
+
+      const formattedLogs = formatLogs(response.data.data);
+      
+      if (replaceAll) {
+        // Replace all logs (manual refresh)
       setLogs(formattedLogs);
+        console.log(`[TimeBreakdown] ✅ Refreshed ${formattedLogs.length} logs`);
+      } else {
+        // Merge new logs (incremental update)
+        setLogs((prevLogs) => {
+          const existingIds = new Set(prevLogs.map(log => log._id));
+          const newLogs: TimeLog[] = [];
+          const updatedLogs: TimeLog[] = [...prevLogs];
+
+          formattedLogs.forEach((newLog) => {
+            if (!existingIds.has(newLog._id)) {
+              newLogs.push(newLog);
+            } else {
+              const index = updatedLogs.findIndex(log => log._id === newLog._id);
+              if (index !== -1) {
+                updatedLogs[index] = newLog;
+              }
+            }
+          });
+
+          const merged = [...updatedLogs, ...newLogs];
+          merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          
+          if (newLogs.length > 0) {
+            console.log(`[TimeBreakdown] ✅ Added ${newLogs.length} new log(s)`);
+          }
+          
+          return merged;
+        });
+      }
     } catch (error: any) {
       console.error("[TimeBreakdown] ❌ Error fetching time logs:", error);
-      console.error("[TimeBreakdown] Error details:", {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
+      if (replaceAll) {
       setLogs([]);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Initial load and auto-refresh every 30 seconds
+  // Initial load only (no auto-refresh)
   useEffect(() => {
-    fetchTimeLogs();
+    fetchTimeLogs(true); // Initial load - replace all
+  }, [facultyId]); // ✅ only runs when facultyId changes
 
-    // Auto-refresh every 30 seconds
-    const refreshInterval = setInterval(() => {
-      fetchTimeLogs();
-    }, 30000);
+  // Check for new logs periodically (every 30 seconds) - only adds new ones
+  useEffect(() => {
+    const checkNewLogsInterval = setInterval(() => {
+      fetchNewLogs(); // Only fetch and add new logs, don't replace
+    }, 30000); // Check every 30 seconds
 
     return () => {
-      clearInterval(refreshInterval);
+      clearInterval(checkNewLogsInterval);
     };
   }, [facultyId]); // ✅ only runs when facultyId changes
 
@@ -244,8 +313,8 @@ const TimeBreakdown: React.FC = React.memo(() => {
                   <InputAdornment position="end">
                     <IconButton
                       size="small"
-                      onClick={fetchTimeLogs}
-                      title="Refresh logs"
+                      onClick={() => fetchTimeLogs(true)}
+                      title="Refresh all logs"
                       sx={{ mr: 1 }}
                     >
                       <RefreshIcon />
@@ -623,8 +692,14 @@ const TimeBreakdown: React.FC = React.memo(() => {
                 });
 
                 setEditDialogOpen(false);
-                // Refresh logs
-                fetchTimeLogs();
+                // Update the specific log in the list
+                setLogs((prevLogs) => {
+                  return prevLogs.map(log => 
+                    log._id === selectedLog._id 
+                      ? { ...log, status: editStatus, remarks: editRemarks }
+                      : log
+                  );
+                });
               } catch (error: any) {
                 console.error("Error updating log:", error);
                 Swal.fire({

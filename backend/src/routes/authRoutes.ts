@@ -416,6 +416,39 @@ router.post(
       
       console.log(`[REPORT] Report generated successfully with ${tableData.length} records`);
       
+      // Log report generation activity (only in online mode with MongoDB)
+      if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+        try {
+          const ActivityLog = (await import("../models/ActivityLog")).default;
+          const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+          const dateRange = startDate && endDate 
+            ? `${startDate} to ${endDate}` 
+            : startDate 
+            ? `from ${startDate}` 
+            : endDate 
+            ? `until ${endDate}` 
+            : 'all dates';
+          await ActivityLog.create({
+            type: 'generate_report',
+            action: 'Generated monthly department report',
+            performedBy: performedBy,
+            targetName: CourseName || 'All Courses',
+            details: `Generated monthly department report for ${CourseName || 'All Courses'} (${dateRange}) - ${tableData.length} records`,
+            metadata: {
+              courseName: CourseName,
+              startDate: startDate,
+              endDate: endDate,
+              searchQuery: searchQuery,
+              recordCount: tableData.length
+            }
+          });
+          console.log(`[REPORT] Logged report generation activity`);
+        } catch (logError) {
+          console.error('[REPORT] Error logging activity:', logError);
+          // Continue even if logging fails
+        }
+      }
+      
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', `attachment; filename="MonthlyDepartmentReport.docx"`);
       res.send(buffer);
@@ -932,6 +965,31 @@ router.delete(
 
       console.log(`[DELETE FACULTY ROUTE] Found faculty: ${faculty.first_name} ${faculty.last_name}`);
 
+      // Log deletion activity before deleting (only in online mode with MongoDB)
+      if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+        try {
+          const ActivityLog = (await import("../models/ActivityLog")).default;
+          const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+          await ActivityLog.create({
+            type: 'delete_account',
+            action: 'Deleted faculty account',
+            performedBy: performedBy,
+            targetUser: faculty.email,
+            targetName: `${faculty.first_name || ''} ${faculty.last_name || ''}`.trim() || faculty.email,
+            details: `Deleted faculty account: ${faculty.email} (${faculty.role || 'instructor'})`,
+            metadata: {
+              facultyId: id,
+              role: faculty.role,
+              course: faculty.course
+            }
+          });
+          console.log(`[DELETE FACULTY ROUTE] Logged deletion activity`);
+        } catch (logError) {
+          console.error('[DELETE FACULTY ROUTE] Error logging activity:', logError);
+          // Continue with deletion even if logging fails
+        }
+      }
+
       const deleted = await UserService.delete(id);
       if (!deleted) {
         console.log(`[DELETE FACULTY ROUTE] Delete operation failed for: ${id}`);
@@ -1240,6 +1298,37 @@ router.delete("/schedules/:id", async (req: Request, res: Response): Promise<voi
     
     console.log(`[DELETE SCHEDULE] Found schedule: ${schedule.courseCode} - ${schedule.courseTitle}`);
     
+    // Log deletion activity before deleting
+    if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+      try {
+        const ActivityLog = (await import("../models/ActivityLog")).default;
+        const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+        const instructorName = schedule.instructor ? 
+          (typeof schedule.instructor === 'object' ? 
+            `${(schedule.instructor as any).first_name || ''} ${(schedule.instructor as any).last_name || ''}`.trim() : 
+            'Unknown') : 
+          'Unknown';
+        await ActivityLog.create({
+          type: 'delete_schedule',
+          action: 'Deleted schedule',
+          performedBy: performedBy,
+          targetName: instructorName,
+          details: `Deleted schedule: ${schedule.courseCode || 'N/A'} - ${schedule.courseTitle || 'N/A'} (${schedule.room || 'N/A'})`,
+          metadata: {
+            scheduleId: id,
+            courseCode: schedule.courseCode,
+            courseTitle: schedule.courseTitle,
+            room: schedule.room,
+            instructor: schedule.instructor
+          }
+        });
+        console.log(`[DELETE SCHEDULE] Logged deletion activity`);
+      } catch (logError) {
+        console.error('[DELETE SCHEDULE] Error logging activity:', logError);
+        // Continue with deletion even if logging fails
+      }
+    }
+    
     // ⚡ MONGODB-ONLY: Delete from MongoDB directly
     // Note: Attendance logs that reference this schedule will keep the reference for historical purposes
     const deleted = await ScheduleService.delete(id);
@@ -1456,6 +1545,49 @@ router.post(
       // The Python recognizer will fetch schedules directly from MongoDB via API
       console.log(`[MONGODB] ✅ Schedule ${newSchedule.courseCode} saved to MongoDB`);
 
+      // Log schedule creation activity (only in online mode with MongoDB)
+      if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+        try {
+          const ActivityLog = (await import("../models/ActivityLog")).default;
+          const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+          // Get instructor name
+          let instructorName = 'Unknown';
+          if (newSchedule.instructor) {
+            if (typeof newSchedule.instructor === 'object') {
+              instructorName = `${(newSchedule.instructor as any).first_name || ''} ${(newSchedule.instructor as any).last_name || ''}`.trim() || 'Unknown';
+            } else {
+              // If instructor is just an ID, try to fetch it
+              try {
+                const instructor = await UserService.findById(String(newSchedule.instructor));
+                if (instructor) {
+                  instructorName = `${instructor.first_name || ''} ${instructor.last_name || ''}`.trim() || 'Unknown';
+                }
+              } catch {
+                instructorName = 'Unknown';
+              }
+            }
+          }
+          await ActivityLog.create({
+            type: 'add_schedule',
+            action: 'Added schedule',
+            performedBy: performedBy,
+            targetName: instructorName,
+            details: `${newSchedule.courseCode || 'N/A'} - ${newSchedule.courseTitle || 'N/A'} (${newSchedule.room || 'N/A'})`,
+            metadata: {
+              scheduleId: newSchedule._id || newSchedule.id,
+              courseCode: newSchedule.courseCode,
+              courseTitle: newSchedule.courseTitle,
+              room: newSchedule.room,
+              instructor: newSchedule.instructor
+            }
+          });
+          console.log(`[ADD SCHEDULE] Logged schedule creation activity`);
+        } catch (logError) {
+          console.error('[ADD SCHEDULE] Error logging activity:', logError);
+          // Continue even if logging fails
+        }
+      }
+
       res.status(201).json({
         message: "Schedule created successfully.",
         schedule: newSchedule,
@@ -1599,6 +1731,30 @@ router.post("/subjects-it", async (req: Request, res: Response): Promise<void> =
       courseTitle: String(courseTitle).trim(),
     });
 
+    // Log subject creation activity (only in online mode with MongoDB)
+    if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+      try {
+        const ActivityLog = (await import("../models/ActivityLog")).default;
+        const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+        await ActivityLog.create({
+          type: 'add_subject',
+          action: 'Added subject',
+          performedBy: performedBy,
+          targetName: created.courseCode,
+          details: `${created.courseCode} - ${created.courseTitle}`,
+          metadata: {
+            subjectId: created._id,
+            courseCode: created.courseCode,
+            courseTitle: created.courseTitle
+          }
+        });
+        console.log(`[ADD SUBJECT] Logged subject creation activity`);
+      } catch (logError) {
+        console.error('[ADD SUBJECT] Error logging activity:', logError);
+        // Continue even if logging fails
+      }
+    }
+
     res.status(201).json({
       success: true,
       data: { courseCode: created.courseCode, courseTitle: created.courseTitle, _id: created._id },
@@ -1677,6 +1833,37 @@ router.delete("/subjects-it/:id", async (req: Request, res: Response): Promise<v
     if (!id) {
       res.status(400).json({ success: false, message: "id is required" });
       return;
+    }
+
+    // Get subject info before deleting
+    const subject = await Subject.findById(id).lean();
+    if (!subject) {
+      res.status(404).json({ success: false, message: "Subject not found" });
+      return;
+    }
+
+    // Log deletion activity before deleting
+    if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+      try {
+        const ActivityLog = (await import("../models/ActivityLog")).default;
+        const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+        await ActivityLog.create({
+          type: 'delete_subject',
+          action: 'Deleted subject',
+          performedBy: performedBy,
+          targetName: subject.courseCode || 'N/A',
+          details: `Deleted subject: ${subject.courseCode || 'N/A'} - ${subject.courseTitle || 'N/A'}`,
+          metadata: {
+            subjectId: id,
+            courseCode: subject.courseCode,
+            courseTitle: subject.courseTitle
+          }
+        });
+        console.log(`[DELETE SUBJECT] Logged deletion activity`);
+      } catch (logError) {
+        console.error('[DELETE SUBJECT] Error logging activity:', logError);
+        // Continue with deletion even if logging fails
+      }
     }
 
     const deleted = await Subject.findByIdAndDelete(id).lean();
@@ -1788,6 +1975,35 @@ router.post("/add-section", async (req: Request, res: Response): Promise<void> =
 
     const saved = await newSection.save();
 
+    // Log section/block creation activity (only in online mode with MongoDB)
+    if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+      try {
+        const ActivityLog = (await import("../models/ActivityLog")).default;
+        const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+        const sectionInfo = `${saved.course || 'N/A'} - Section ${saved.section || 'N/A'}${saved.block ? ` Block ${saved.block}` : ''}`;
+        const college = await CollegeModel.findById(saved.college);
+        const collegeName = college?.name || college?.code || 'N/A';
+        await ActivityLog.create({
+          type: 'add_section_block',
+          action: 'Added section/block',
+          performedBy: performedBy,
+          targetName: sectionInfo,
+          details: `Section ${saved.section || 'N/A'}${saved.block ? ` Block ${saved.block}` : ''} added for ${saved.course || 'N/A'} (${collegeName})`,
+          metadata: {
+            sectionId: saved._id,
+            course: saved.course,
+            section: saved.section,
+            block: saved.block,
+            college: collegeName
+          }
+        });
+        console.log(`[ADD SECTION] Logged section creation activity`);
+      } catch (logError) {
+        console.error('[ADD SECTION] Error logging activity:', logError);
+        // Continue even if logging fails
+      }
+    }
+
     res.status(201).json({ data: saved });
   } catch (error) {
     console.error("Error creating section:", error);
@@ -1843,6 +2059,43 @@ router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
     if (!mongoose.isValidObjectId(id)) {
       res.status(400).json({ message: "Invalid section id" });
       return;
+    }
+
+    // Get section info before deleting
+    const section = await Section.findById(id).populate('college', 'name code').lean();
+    if (!section) {
+      res.status(404).json({ message: "Section not found" });
+      return;
+    }
+
+    // Log deletion activity before deleting
+    if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+      try {
+        const ActivityLog = (await import("../models/ActivityLog")).default;
+        const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Program Chair';
+        const sectionName = section.section || 'N/A';
+        const blockName = section.block || 'N/A';
+        const courseCode = section.course || 'N/A';
+        const collegeName = (section.college as any)?.name || (section.college as any)?.code || 'N/A';
+        await ActivityLog.create({
+          type: 'delete_section_block',
+          action: 'Deleted section/block',
+          performedBy: performedBy,
+          targetName: `${courseCode} - Section ${sectionName}${blockName ? ` Block ${blockName}` : ''}`,
+          details: `Deleted section ${sectionName}${blockName ? ` Block ${blockName}` : ''} for ${courseCode} (${collegeName})`,
+          metadata: {
+            sectionId: id,
+            course: courseCode,
+            section: sectionName,
+            block: blockName,
+            college: collegeName
+          }
+        });
+        console.log(`[DELETE SECTION] Logged deletion activity`);
+      } catch (logError) {
+        console.error('[DELETE SECTION] Error logging activity:', logError);
+        // Continue with deletion even if logging fails
+      }
     }
 
     const deleted = await Section.findByIdAndDelete(id).lean();

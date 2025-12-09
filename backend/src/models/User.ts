@@ -92,6 +92,8 @@ const UserSchema: Schema<IUser> = new Schema({
     path: { type: String, required: true },
     uploadedAt: { type: Date, default: Date.now }
   }],
+}, {
+  timestamps: true, // Enable createdAt and updatedAt
 });
 
 const UserModel: Model<IUser> = mongoose.model<IUser>("User", UserSchema);

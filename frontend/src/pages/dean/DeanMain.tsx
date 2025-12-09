@@ -20,6 +20,7 @@ import {
   Face,
   AccessTime,
   Assessment,
+  History,
 } from "@mui/icons-material";
 import AdminHeader from "../../components/AdminHeader";
 
@@ -71,6 +72,11 @@ const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       text: "Generate Reports",
       icon: <Assessment />,
       path: "/dean-faculty-reports/:id",
+    },
+    {
+      text: "Activity History",
+      icon: <History />,
+      path: `/dean-activity-history/${facultyId}`,
     },
   ];
 
@@ -156,7 +162,7 @@ const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </List>
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, p: 1, mt: 4 }}>
+      <Box component="main" sx={{ flexGrow: 1, p: 3, pt: 2, mt: 8, overflow: "visible", minHeight: "calc(100vh - 64px)", width: "100%" }}>
         {children}
       </Box>
     </Box>

@@ -1060,9 +1060,40 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
           providedRoom: roomName || null
         }
       });
-    } catch (error) {
+    } catch (error: any) {
+      // ⚡ IMPROVED ERROR HANDLING: Handle MongoDB connection errors gracefully
+      const isMongoError = error?.name === 'MongoServerSelectionError' || 
+                          error?.name === 'MongoNetworkError' ||
+                          error?.message?.includes('ETIMEDOUT') ||
+                          error?.message?.includes('ENETUNREACH') ||
+                          error?.message?.includes('MongoServerSelectionError');
+      
+      if (isMongoError) {
+        console.error('[API] ❌ MongoDB connection error in get-current-schedule:', error?.message || String(error));
+        console.error('[API] ⚠️ MongoDB is unreachable - returning null schedule to allow Python fallback to cache');
+        // Return 200 with null schedule (not 500) so Python recognizer can fall back to cache
+        res.status(200).json({ 
+          schedule: null, 
+          isValidSchedule: false,
+          timeMatch: false,
+          roomMatch: null,
+          mode: isOfflineMode() ? 'offline' : 'online',
+          error: 'MongoDB connection failed',
+          mongoError: true
+        });
+        return;
+      }
+      
+      // For other errors, still return 200 with null schedule (graceful degradation)
       console.error('[API] ❌ Error in get-current-schedule:', error);
-      res.status(500).json({ schedule: null, error: String(error), mode: isOfflineMode() ? 'offline' : 'online' });
+      res.status(200).json({ 
+        schedule: null, 
+        isValidSchedule: false,
+        timeMatch: false,
+        roomMatch: null,
+        mode: isOfflineMode() ? 'offline' : 'online',
+        error: error?.message || String(error)
+      });
     }
   });
 

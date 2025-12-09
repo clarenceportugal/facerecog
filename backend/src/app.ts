@@ -10,6 +10,7 @@ import superadminRoutes from './routes/superadminRoutes';
 import loginSignupRoutes from './routes/loginSignupRoutes';
 import accountCompletion from './routes/accountCompletion';
 import faceRoutes from './routes/faceRoutes';
+import activityRoutes from './routes/activityRoutes';
 import { isOfflineMode, getModeDescription } from './utils/systemMode';
 import { initOfflineDatabase, getDbStats } from './services/offlineDatabase';
 import { syncAllDataToOffline, syncLogsToMongoDB, syncOfflineChangesToMongoDB, getSyncStatus } from './services/syncService';
@@ -171,6 +172,7 @@ app.use('/api/auth', deanRoutes);
 app.use('/api/loginsignup', loginSignupRoutes);
 app.use('/api/accountcompletion', accountCompletion);
 app.use('/api/face', faceRoutes);
+app.use('/api/auth', activityRoutes);
 
 // Global error handler - catches Mongoose errors in offline mode
 app.use((err: any, req: any, res: any, next: any) => {

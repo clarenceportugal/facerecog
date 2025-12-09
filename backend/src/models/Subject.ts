@@ -17,6 +17,8 @@ const SubjectSchema: Schema = new Schema({
     trim: true,
     unique: true
   }
+}, {
+  timestamps: true, // Enable createdAt and updatedAt
 });
 
 export default mongoose.model<ISubject>('Subject', SubjectSchema);

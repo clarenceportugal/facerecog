@@ -51,6 +51,6 @@ const TempAccSchema: Schema<ITempAcc> = new Schema({
   tempPassword: {
     type: String,
   },
-});
+}, { timestamps: true }); // Enable createdAt and updatedAt
 
 export default mongoose.model<ITempAcc>("TempAcc", TempAccSchema);

@@ -12,6 +12,7 @@ import fs from "fs";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import User from "../models/User";
+import mongoose from "mongoose";
 import { 
   UserService, 
   CollegeService, 
@@ -388,6 +389,38 @@ router.post(
       fs.writeFileSync(outputPath, buffer);
       
       console.log(`[REPORT] Report generated successfully with ${tableData.length} records`);
+      
+      // Log report generation activity (only in online mode with MongoDB)
+      if (!isOfflineMode() && mongoose.connection.readyState === 1) {
+        try {
+          const ActivityLog = (await import("../models/ActivityLog")).default;
+          const performedBy = (req as any).user?.userName || (req as any).user?.username || 'Dean';
+          const dateRange = startDate && endDate 
+            ? `${startDate} to ${endDate}` 
+            : startDate 
+            ? `from ${startDate}` 
+            : endDate 
+            ? `until ${endDate}` 
+            : 'all dates';
+          await ActivityLog.create({
+            type: 'generate_report',
+            action: 'Generated monthly department report',
+            performedBy: performedBy,
+            targetName: courseCode || 'All Courses',
+            details: `Generated monthly department report for ${courseCode || 'All Courses'} (${dateRange}) - ${tableData.length} records`,
+            metadata: {
+              courseCode: courseCode,
+              startDate: startDate,
+              endDate: endDate,
+              recordCount: tableData.length
+            }
+          });
+          console.log(`[REPORT] Logged report generation activity`);
+        } catch (logError) {
+          console.error('[REPORT] Error logging activity:', logError);
+          // Continue even if logging fails
+        }
+      }
       
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', `attachment; filename="MonthlyDepartmentReport.docx"`);

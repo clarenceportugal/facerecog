@@ -21,6 +21,7 @@ import FaceRegistration from "./pages/programchairperson/FaceRegistration";
 import CameraTest from "./components/CameraTest";
 import TimeBreakdown from "./pages/programchairperson/TimeBreakdown";
 import CourseBlockManagement from "./pages/programchairperson/CourseBlockManagement";
+import ActivityHistory from "./pages/programchairperson/ActivityHistory";
 {
   /* for faculty*/
 }
@@ -51,6 +52,7 @@ import PendingStaff from "./pages/dean/PendingStaff";
 import DeanFaceRegistration from "./pages/dean/FaceRegistration";
 import DeanFacultyReports from "./pages/dean/DeanFacultyReport";
 import DeanTimeBreakdown from "./pages/dean/DeanTimeBreakdown";
+import DeanActivityHistory from "./pages/dean/DeanActivityHistory";
 
 export default function App() {
   return (
@@ -192,6 +194,15 @@ export default function App() {
           }
         />
 
+        <Route
+          path="/dean-activity-history/:id"
+          element={
+            <DeanMain>
+              <DeanActivityHistory />
+            </DeanMain>
+          }
+        />
+
         {/* User Routes */}
         <Route
           path="/faculty-dashboard/:id"
@@ -295,6 +306,14 @@ export default function App() {
           }
         />
 
+        <Route
+          path="/activity-history/:id"
+          element={
+            <AdminMain>
+              <ActivityHistory />
+            </AdminMain>
+          }
+        />
 
         <Route
           path="/camera-test"

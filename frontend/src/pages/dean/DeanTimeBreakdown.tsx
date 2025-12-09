@@ -87,24 +87,9 @@ const [selectedCourse, setSelectedCourse] = useState<string>("");
 }, []);
 
 
-  useEffect(() => {
-  let isMounted = true; // avoid setting state if unmounted
-
-  const fetchTimeLogs = async () => {
-    try {
-      setLoading(true);
-
-      // ✅ Use the selected course from the dropdown
-      if (!selectedCourse) return;
-
-      const response = await axios.post(
-        "http://localhost:5000/api/auth/dean-show-monthly-department-logs",
-        { courseCode: selectedCourse }
-      );
-
-      if (!isMounted) return;
-
-      const formattedLogs: TimeLog[] = response.data.data
+  // Helper function to format logs from API response
+  const formatLogs = (data: any[]): TimeLog[] => {
+    return data
         .filter((log: any) => log.schedule !== null && log.schedule !== undefined)
         .map((log: any) => {
           const first = log.schedule?.instructor?.first_name || '';
@@ -125,27 +110,114 @@ const [selectedCourse, setSelectedCourse] = useState<string>("");
             remarks: log.remarks,
           };
         });
+  };
 
-      setLogs(formattedLogs);
+  // Fetch and add only new logs (incremental update)
+  const fetchNewLogs = async () => {
+    try {
+      // ✅ Fetch logs - if no course selected, fetch all courses
+      const requestBody = selectedCourse ? { courseCode: selectedCourse } : {};
+      
+      const response = await axios.post(
+        "http://localhost:5000/api/auth/dean-show-monthly-department-logs",
+        requestBody
+      );
+
+      if (!response.data.data || response.data.data.length === 0) {
+        return; // No new data
+      }
+
+      const formattedLogs = formatLogs(response.data.data);
+      
+      // Merge new logs with existing logs (add new ones, update existing ones)
+      setLogs((prevLogs) => {
+        const existingIds = new Set(prevLogs.map(log => log._id));
+        const newLogs: TimeLog[] = [];
+        const updatedLogs: TimeLog[] = [...prevLogs];
+
+        formattedLogs.forEach((newLog) => {
+          if (!existingIds.has(newLog._id)) {
+            // New log - add it
+            newLogs.push(newLog);
+          } else {
+            // Existing log - update it (in case timeOut or status changed)
+            const index = updatedLogs.findIndex(log => log._id === newLog._id);
+            if (index !== -1) {
+              updatedLogs[index] = newLog;
+            }
+          }
+        });
+
+        // Sort by date (newest first) and return merged array
+        const merged = [...updatedLogs, ...newLogs];
+        merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        if (newLogs.length > 0) {
+          console.log(`[DeanTimeBreakdown] ✅ Added ${newLogs.length} new log(s)`);
+        }
+        
+        return merged;
+      });
     } catch (error) {
-      console.error("Error fetching time logs:", error);
-    } finally {
-      if (isMounted) setLoading(false);
+      console.error("[DeanTimeBreakdown] ❌ Error fetching new logs:", error);
     }
   };
 
-  // ✅ Only fetch if a course is selected
-  if (selectedCourse) {
+  // Full fetch (initial load or when course changes) - replaces all logs
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchTimeLogs = async () => {
+      try {
+        setLoading(true);
+
+        // ✅ Fetch logs - if no course selected, fetch all courses
+        const requestBody = selectedCourse ? { courseCode: selectedCourse } : {};
+        
+        const response = await axios.post(
+          "http://localhost:5000/api/auth/dean-show-monthly-department-logs",
+          requestBody
+        );
+
+        if (!isMounted) return;
+
+        if (!response.data.data || response.data.data.length === 0) {
+          setLogs([]);
+          setLoading(false);
+          return;
+        }
+
+        const formattedLogs = formatLogs(response.data.data);
+      setLogs(formattedLogs);
+    } catch (error) {
+      console.error("Error fetching time logs:", error);
+        if (isMounted) {
+          setLogs([]);
+        }
+    } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+    }
+  };
+
     fetchTimeLogs();
-  } else {
-    // Clear logs when no course is selected
-    setLogs([]);
-  }
 
   return () => {
     isMounted = false;
   };
 }, [selectedCourse]); // ✅ Fetch when dropdown changes
+
+  // Check for new logs periodically (every 30 seconds) - only adds new ones
+  useEffect(() => {
+    const checkNewLogsInterval = setInterval(() => {
+      fetchNewLogs(); // Only fetch and add new logs, don't replace
+    }, 30000); // Check every 30 seconds
+
+    return () => {
+      clearInterval(checkNewLogsInterval);
+    };
+  }, [selectedCourse]); // ✅ only runs when selectedCourse changes
 
 
   // ✅ Memoize unique years so reference doesn't change every render

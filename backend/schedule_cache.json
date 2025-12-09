@@ -46,45 +46,18 @@
           "first_name": "Allen",
           "last_name": "Efondo"
         }
-      }
-    ],
-    "Daniel, adrian": [
+      },
       {
-        "_id": "6932876ad857740184d7bc43",
-        "courseTitle": "Introduction to Information Technology",
-        "courseCode": "IT 101",
-        "room": "Lab 2",
-        "startTime": "15:20",
-        "endTime": "16:00",
+        "_id": "693739b31264bd10e9f682e5",
+        "courseTitle": "Programming Fundamentals",
+        "courseCode": "IT 112",
+        "room": "Lab 1",
+        "startTime": "10:00",
+        "endTime": "11:00",
         "days": {
           "mon": false,
-          "tue": false,
-          "wed": false,
-          "thu": false,
-          "fri": true,
-          "sat": false,
-          "sun": false
-        },
-        "semesterStartDate": "2025-08-01",
-        "semesterEndDate": "2025-12-15",
-        "instructor": {
-          "first_name": "adrian",
-          "last_name": "Daniel"
-        }
-      }
-    ],
-    "Portugal, Richard": [
-      {
-        "_id": "693633cfb6b3e6aec8bdb0bf",
-        "courseTitle": "Web Systems and Technologies",
-        "courseCode": "IT 214",
-        "room": "Lab 2",
-        "startTime": "10:00",
-        "endTime": "12:00",
-        "days": {
-          "mon": true,
           "tue": true,
-          "wed": true,
+          "wed": false,
           "thu": false,
           "fri": false,
           "sat": false,
@@ -93,8 +66,8 @@
         "semesterStartDate": "2025-08-01",
         "semesterEndDate": "2025-12-15",
         "instructor": {
-          "first_name": "Richard",
-          "last_name": "Portugal"
+          "first_name": "Allen",
+          "last_name": "Efondo"
         }
       }
     ],
@@ -124,5 +97,5 @@
       }
     ]
   },
-  "last_refresh": "2025-12-08T16:20:44.391891"
+  "last_refresh": "2025-12-09T08:33:32.955929"
 }

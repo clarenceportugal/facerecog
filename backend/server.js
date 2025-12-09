@@ -25,7 +25,7 @@ const USE_MEDIAMTX = false; // Set to false to use FFmpeg directly (no MediaMTX 
 const CAMERA_CONFIG = {
   camera1: {
     name: 'Camera 1',
-    rtspUrl: 'rtsp://admin:Eduvision124@192.168.0.105:554/Streaming/Channels/101',
+    rtspUrl: 'rtsp://admin:Eduvision124@192.168.254.5:554/Streaming/Channels/101',
     mediamtxStream: 'mycamera' // MediaMTX stream name (must match the path name in mediamtx.yml)
   },
   camera2: {
@@ -570,6 +570,7 @@ rl.on('line', (line) => {
   
   // ⚡ FILTER: Skip log messages that aren't JSON (common prefixes)
   // Filter out insightface/onnxruntime debug messages and Python log messages
+  // Also filter messages that contain these patterns anywhere (for prefixed messages like [Python] [CACHE])
   if (line.startsWith('Applied providers:') ||
       line.startsWith('find model:') ||
       line.startsWith('set det-size:') ||
@@ -584,7 +585,10 @@ rl.on('line', (line) => {
       line.startsWith('[PROFILE]') ||
       line.startsWith('[PERF]') ||
       line.startsWith('[GPU]') ||
-      line.match(/^\d{4}-\d{2}-\d{2}/)) { // Date timestamps
+      line.match(/^\d{4}-\d{2}-\d{2}/) || // Date timestamps
+      line.includes('[CACHE]') || // Filter cache messages even if prefixed
+      (line.includes('Connection refused') && line.includes('localhost:5000')) || // Filter expected connection errors
+      (line.includes('Internet connection failed') && line.includes('localhost:5000'))) { // Filter expected connection errors
     // These are log/debug messages, not JSON - ignore them silently
     return;
   }
@@ -809,7 +813,7 @@ function startMediaMTXStream(ws, cameraId, streamName, cameraName, retryCount = 
           console.error(`[${cameraName}] ${errorMsg}`);
           console.error(`[${cameraName}] Troubleshooting:`);
           console.error(`[${cameraName}] 1. Check MediaMTX logs for connection errors`);
-          console.error(`[${cameraName}] 2. Verify camera RTSP URL in mediamtx.yml: rtsp://admin:Eduvision124@192.168.0.105:554/Streaming/Channels/101`);
+          console.error(`[${cameraName}] 2. Verify camera RTSP URL in mediamtx.yml: rtsp://admin:Eduvision124@192.168.254.5:554/Streaming/Channels/101`);
           console.error(`[${cameraName}] 3. Test camera in VLC with the same RTSP URL`);
           console.error(`[${cameraName}] 4. Try accessing MediaMTX stream directly: ${mjpegUrl}`);
           if (ws.readyState === WebSocket.OPEN) {
