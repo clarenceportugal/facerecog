@@ -26,7 +26,7 @@ import {
   Autocomplete,
   TablePagination,
   CircularProgress,
-  Chip
+  Chip,
 } from "@mui/material";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
@@ -36,7 +36,6 @@ import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import SearchIcon from "@mui/icons-material/Search";
 import Swal from "sweetalert2";
 import { useFacultyContext } from "../../context/FacultyContext";
-import BlockIcon from "@mui/icons-material/Block";
 import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import axios from "axios";
 import DeanMain from "./DeanMain";
@@ -72,7 +71,8 @@ const ProgramchairInfo: React.FC = () => {
   const { facultyList, setFacultyList } = useFacultyContext();
   const [selectedFaculty, setSelectedFaculty] = useState<string | null>(null);
   const [openModal, setOpenModal] = useState(false);
-  const [newFaculty, setNewFaculty] = useState({
+  const [isEdit, setIsEdit] = useState(false);
+  const [newFaculty, setNewFaculty] = useState<any>({
     last_name: "",
     first_name: "",
     middle_name: "",
@@ -103,30 +103,6 @@ const ProgramchairInfo: React.FC = () => {
     null
   );
   const [selectedChairId, setSelectedChairId] = useState<string | null>(null);
-
-  const handleActionMenuOpen = (
-    event: React.MouseEvent<HTMLButtonElement>,
-    chairId: string
-  ) => {
-    setActionAnchorEl(event.currentTarget);
-    setSelectedChairId(chairId);
-  };
-
-  const handleActionMenuClose = () => {
-    setActionAnchorEl(null);
-    setSelectedChairId(null);
-  };
-
-  const handleChangePage = (_event: unknown, newPage: number) => {
-    setPage(newPage);
-  };
-
-  const handleChangeRowsPerPage = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
-  };
 
   useEffect(() => {
     const fetchCourses = async () => {
@@ -264,18 +240,38 @@ const ProgramchairInfo: React.FC = () => {
     return Math.floor(1000 + Math.random() * 9000).toString();
   };
 
-  const handleOpenModal = () => {
-    setNewFaculty({
-      last_name: "",
-      first_name: "",
-      middle_name: "",
-      username: "",
-      email: "",
-      password: random4Digit(),
-      role: "instructor",
-      course: "",
-      college: collegeCode,
-    });
+  // Modified: handleOpenModal now supports editing by passing a ProgramChair
+  const handleOpenModal = (faculty?: ProgramChair | null) => {
+    if (faculty) {
+      // populate form for editing
+      setNewFaculty({
+        _id: faculty._id,
+        last_name: faculty.last_name,
+        first_name: faculty.first_name,
+        middle_name: faculty.middle_name || "",
+        username: faculty.username,
+        email: faculty.email,
+        password: "", // do not expose password
+        role: faculty.role,
+        course: faculty.course,
+        college: collegeCode || faculty.college?.code || "",
+      });
+      setIsEdit(true);
+    } else {
+      setNewFaculty({
+        last_name: "",
+        first_name: "",
+        middle_name: "",
+        username: "",
+        email: "",
+        password: random4Digit(),
+        role: "instructor",
+        course: "",
+        college: collegeCode,
+      });
+      setIsEdit(false);
+    }
+
     setOpenModal(true);
   };
 
@@ -292,16 +288,17 @@ const ProgramchairInfo: React.FC = () => {
       course: "",
       college: "",
     });
+    setIsEdit(false);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setNewFaculty((prev) => ({ ...prev, [name]: value }));
+    setNewFaculty((prev: any) => ({ ...prev, [name]: value }));
   };
 
   const handleRoleChange = (event: SelectChangeEvent<string>) => {
     const selectedRole = event.target.value;
-    setNewFaculty((prev) => ({
+    setNewFaculty((prev: any) => ({
       ...prev,
       role: selectedRole,
       course: "", // reset course on role change
@@ -346,6 +343,35 @@ const ProgramchairInfo: React.FC = () => {
     }
   };
 
+  const handleUpdateAccount = async () => {
+    try {
+      const id = newFaculty._id || selectedChairId;
+      if (!id) throw new Error("No faculty selected for update.");
+
+      // Only send the fields that can be updated.
+      const payload: any = {
+        last_name: newFaculty.last_name,
+        first_name: newFaculty.first_name,
+        middle_name: newFaculty.middle_name,
+        email: newFaculty.email,
+        role: newFaculty.role,
+        course: newFaculty.course,
+      };
+
+      await axios.patch(
+        `https://eduvision-dura.onrender.com/api/auth/faculty/${id}`,
+        payload
+      );
+
+      Swal.fire({ icon: "success", title: "Updated", text: "Faculty updated successfully." });
+      handleCloseModal();
+      fetchProgramChairs();
+    } catch (error: any) {
+      console.error("Error updating faculty:", error);
+      Swal.fire({ icon: "error", title: "Error", text: error.response?.data?.message || "Failed to update faculty." });
+    }
+  };
+
   const handleDeleteAccount = async (id: string) => {
     const confirmation = await Swal.fire({
       title: "Are you sure?",
@@ -384,18 +410,13 @@ const ProgramchairInfo: React.FC = () => {
   };
 
   const generateUsername = (firstName: string, lastName: string, middleName?: string) => {
-    // Different construction: first initial + last name (up to 5 chars) + first name (up to 3 chars)
-    // Example: "John" "Abejero" -> "JABEJJO" or "JABEJOHN"
     const firstInitial = firstName.charAt(0).toUpperCase();
     const lastPart = lastName.substring(0, Math.min(5, lastName.length)).toUpperCase();
     const firstPart = firstName.substring(0, Math.min(3, firstName.length)).toUpperCase();
     const middle = middleName ? middleName.charAt(0).toUpperCase() : '';
-    
     if (middle) {
-      // First initial + last (5 chars) + middle initial + first (3 chars)
       return firstInitial + lastPart + middle + firstPart;
     }
-    // First initial + last (5 chars) + first (3 chars)
     return firstInitial + lastPart + firstPart;
   };
 
@@ -406,12 +427,36 @@ const ProgramchairInfo: React.FC = () => {
           newFaculty.first_name,
           newFaculty.last_name
         );
-        setNewFaculty((prev) => ({ ...prev, username }));
+        setNewFaculty((prev: any) => ({ ...prev, username }));
       }
     }, 2000);
 
     return () => clearTimeout(timer);
   }, [newFaculty.first_name, newFaculty.last_name]);
+
+  const handleActionMenuOpen = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    chairId: string
+  ) => {
+    setActionAnchorEl(event.currentTarget);
+    setSelectedChairId(chairId);
+  };
+
+  const handleActionMenuClose = () => {
+    setActionAnchorEl(null);
+    setSelectedChairId(null);
+  };
+
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
 
   return (
     <DeanMain>
@@ -465,7 +510,7 @@ const ProgramchairInfo: React.FC = () => {
 
             <IconButton
               color="primary"
-              onClick={handleOpenModal}
+              onClick={() => handleOpenModal(null)}
               sx={{
                 backgroundColor: "primary.main",
                 color: "#fff",
@@ -715,190 +760,185 @@ const ProgramchairInfo: React.FC = () => {
                         </IconButton>
                       </TableCell>
                     </TableRow>
-                      ))
-                  ) : (
-                    <TableRow>
-                      <TableCell
-                        colSpan={6}
-                        align="center"
-                        sx={{ py: 6, fontStyle: "italic", color: "text.secondary" }}
-                      >
-                        No faculty data available.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    align="center"
+                    sx={{ py: 6, fontStyle: "italic", color: "text.secondary" }}
+                  >
+                    No faculty data available.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
 
-              <TablePagination
-                component="div"
-                count={filteredChairs.length}
-                page={page}
-                onPageChange={handleChangePage}
-                rowsPerPage={rowsPerPage}
-                onRowsPerPageChange={handleChangeRowsPerPage}
-                rowsPerPageOptions={[5, 10, 25]}
-                sx={{
-                  borderTop: "1px solid #e0e0e0",
-                  backgroundColor: "#fafafa",
-                  px: 2,
-                }}
-              />
-            </TableContainer>
+          <TablePagination
+            component="div"
+            count={filteredChairs.length}
+            page={page}
+            onPageChange={handleChangePage}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            rowsPerPageOptions={[5, 10, 25]}
+            sx={{
+              borderTop: "1px solid #e0e0e0",
+              backgroundColor: "#fafafa",
+              px: 2,
+            }}
+          />
+        </TableContainer>
 
-            {/* Action menu */}
-            <Menu
-              anchorEl={actionAnchorEl}
-              open={Boolean(actionAnchorEl)}
-              onClose={handleActionMenuClose}
-            >
-              <MenuItem
-                onClick={() => {
-                  console.log("Block user:", selectedChairId);
-                  handleActionMenuClose();
-                }}
+        {/* Action menu - removed Update Status and Edit items, only Delete remains */}
+        <Menu
+          anchorEl={actionAnchorEl}
+          open={Boolean(actionAnchorEl)}
+          onClose={handleActionMenuClose}
+        >
+          <MenuItem
+            onClick={() => {
+              if (selectedChairId) handleDeleteAccount(selectedChairId);
+              handleActionMenuClose();
+            }}
+          >
+            <DeleteIcon fontSize="small" sx={{ color: "red", mr: 1 }} /> Delete
+          </MenuItem>
+        </Menu>
+
+        {/* Add/Edit Faculty Dialog */}
+        <Dialog open={openModal} onClose={handleCloseModal}>
+          <DialogTitle>{isEdit ? "Edit Faculty Account" : "Add Faculty Account"}</DialogTitle>
+          <DialogContent>
+            <TextField
+              fullWidth
+              label="Last Name"
+              name="last_name"
+              value={newFaculty.last_name}
+              onChange={handleInputChange}
+              margin="dense"
+            />
+            <TextField
+              fullWidth
+              label="First Name"
+              name="first_name"
+              value={newFaculty.first_name}
+              onChange={handleInputChange}
+              margin="dense"
+            />
+            <TextField
+              fullWidth
+              label="Middle Name"
+              name="middle_name"
+              value={newFaculty.middle_name}
+              onChange={handleInputChange}
+              margin="dense"
+            />
+            <TextField
+              label="Username"
+              name="username"
+              value={newFaculty.username}
+              fullWidth
+              margin="normal"
+              InputProps={{
+                readOnly: true,
+              }}
+            />
+
+            <TextField
+              fullWidth
+              label="Email"
+              name="email"
+              value={newFaculty.email}
+              onChange={handleInputChange}
+              margin="dense"
+            />
+            <TextField
+              fullWidth
+              label="Password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              value={newFaculty.password}
+              onChange={handleInputChange}
+              margin="dense"
+              InputProps={{
+                readOnly: true,
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton onClick={togglePasswordVisibility} edge="end">
+                      {showPassword ? <VisibilityOff /> : <Visibility />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+            />
+            <FormControl fullWidth margin="dense">
+              <InputLabel>Role</InputLabel>
+              <Select
+                value={newFaculty.role}
+                onChange={handleRoleChange}
+                label="Role"
+                name="role"
               >
-                <BlockIcon fontSize="small" sx={{ mr: 1 }} /> Block
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  if (selectedChairId) handleDeleteAccount(selectedChairId);
-                  handleActionMenuClose();
-                }}
+                <MenuItem value="instructor">Instructor</MenuItem>
+                <MenuItem value="programchairperson">
+                  Program Chairperson
+                </MenuItem>
+              </Select>
+            </FormControl>
+
+            <Autocomplete
+              options={courses.map((course) => (course?.code ?? "").toUpperCase())}
+              getOptionLabel={(option) => option}
+              value={newFaculty.course ? String(newFaculty.course).toUpperCase() : null}
+              onChange={(_, newValue) => {
+                setNewFaculty((prev: any) => ({ ...prev, course: newValue ? String(newValue).toUpperCase() : "" }));
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Select Course Code"
+                  variant="outlined"
+                  size="small"
+                  fullWidth
+                  margin="dense"
+                  InputProps={{
+                    ...params.InputProps,
+                    inputProps: {
+                      ...params.inputProps,
+                      style: { textTransform: "uppercase" },
+                    },
+                  }}
+                />
+              )}
+              freeSolo={false}
+              disableClearable={false}
+              sx={{ mt: 1 }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseModal}>Cancel</Button>
+            {isEdit ? (
+              <Button
+                onClick={handleUpdateAccount}
+                variant="contained"
+                color="primary"
               >
-                <DeleteIcon fontSize="small" sx={{ color: "red", mr: 1 }} />{" "}
-                Delete
-              </MenuItem>
-            </Menu>
+                Save Changes
+              </Button>
+            ) : (
+              <Button
+                onClick={handleAddAccount}
+                variant="contained"
+                color="primary"
+              >
+                Add
+              </Button>
+            )}
+          </DialogActions>
+        </Dialog>
       </Box>
-
-      {/* make sure you have: import Autocomplete from '@mui/material/Autocomplete' at the top of the file */}
-
-<Dialog open={openModal} onClose={handleCloseModal}>
-  <DialogTitle>Add Faculty Account</DialogTitle>
-  <DialogContent>
-    <TextField
-      fullWidth
-      label="Last Name"
-      name="last_name"
-      value={newFaculty.last_name}
-      onChange={handleInputChange}
-      margin="dense"
-    />
-    <TextField
-      fullWidth
-      label="First Name"
-      name="first_name"
-      value={newFaculty.first_name}
-      onChange={handleInputChange}
-      margin="dense"
-    />
-    <TextField
-      fullWidth
-      label="Middle Name"
-      name="middle_name"
-      value={newFaculty.middle_name}
-      onChange={handleInputChange}
-      margin="dense"
-    />
-    <TextField
-      label="Username"
-      name="username"
-      value={newFaculty.username}
-      fullWidth
-      margin="normal"
-      InputProps={{
-        readOnly: true,
-      }}
-    />
-
-    <TextField
-      fullWidth
-      label="Email"
-      name="email"
-      value={newFaculty.email}
-      onChange={handleInputChange}
-      margin="dense"
-    />
-    <TextField
-      fullWidth
-      label="Password"
-      name="password"
-      type={showPassword ? "text" : "password"}
-      value={newFaculty.password}
-      onChange={handleInputChange}
-      margin="dense"
-      InputProps={{
-        readOnly: true,
-        endAdornment: (
-          <InputAdornment position="end">
-            <IconButton onClick={togglePasswordVisibility} edge="end">
-              {showPassword ? <VisibilityOff /> : <Visibility />}
-            </IconButton>
-          </InputAdornment>
-        ),
-      }}
-    />
-    <FormControl fullWidth margin="dense">
-      <InputLabel>Role</InputLabel>
-      <Select
-        value={newFaculty.role}
-        onChange={handleRoleChange}
-        label="Role"
-        name="role"
-      >
-        <MenuItem value="instructor">Instructor</MenuItem>
-        <MenuItem value="programchairperson">
-          Program Chairperson
-        </MenuItem>
-        {/* Add more roles if needed */}
-      </Select>
-    </FormControl>
-
-    {/* SINGLE-LINE AUTOCOMPLETE — options & value are uppercased */}
-    <Autocomplete
-      options={courses.map((course) => (course?.code ?? "").toUpperCase())}
-      getOptionLabel={(option) => option}
-      value={newFaculty.course ? String(newFaculty.course).toUpperCase() : null}
-      onChange={(_, newValue) => {
-        setNewFaculty((prev) => ({ ...prev, course: newValue ? String(newValue).toUpperCase() : "" }));
-      }}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          label="Select Course Code"
-          variant="outlined"
-          size="small"
-          fullWidth
-          margin="dense"
-          InputProps={{
-            ...params.InputProps,
-            // ensure the input text is uppercase visually (also helps if user types)
-            inputProps: {
-              ...params.inputProps,
-              style: { textTransform: "uppercase" },
-            },
-          }}
-        />
-      )}
-      // keep it single-line and full width; no fixed width
-      freeSolo={false}
-      disableClearable={false}
-      sx={{ mt: 1 }}
-    />
-  </DialogContent>
-  <DialogActions>
-    <Button onClick={handleCloseModal}>Cancel</Button>
-    <Button
-      onClick={handleAddAccount}
-      variant="contained"
-      color="primary"
-    >
-      Add
-    </Button>
-  </DialogActions>
-</Dialog>
-
     </DeanMain>
   );
 };

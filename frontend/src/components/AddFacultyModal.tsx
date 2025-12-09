@@ -35,7 +35,6 @@ const AddFacultyModal: React.FC<AddFacultyModalProps> = ({
   onClose,
   onAdd,
   newFaculty,
-  setNewFaculty,
   handleInputChange,
   handleRoleChange,
   showPassword,
@@ -186,34 +185,6 @@ const AddFacultyModal: React.FC<AddFacultyModalProps> = ({
               name="statusOfAppointment"
               value={newFaculty.statusOfAppointment}
               onChange={handleInputChange}
-              margin="dense"
-            />
-            <TextField
-              fullWidth
-              label="Number of Preparations"
-              type="number"
-              inputProps={{ min: 0, step: "any" }}
-              value={newFaculty.numberOfPrep}
-              onChange={(e) =>
-                setNewFaculty({
-                  ...newFaculty,
-                  numberOfPrep: parseFloat(e.target.value),
-                })
-              }
-              margin="dense"
-            />
-            <TextField
-              fullWidth
-              label="Total Teaching Load"
-              type="number"
-              inputProps={{ min: 0, step: "any" }}
-              value={newFaculty.totalTeachingLoad}
-              onChange={(e) =>
-                setNewFaculty({
-                  ...newFaculty,
-                  totalTeachingLoad: parseFloat(e.target.value),
-                })
-              }
               margin="dense"
             />
           </Grid>

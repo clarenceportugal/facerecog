@@ -187,14 +187,14 @@ const FacultyReports: React.FC = React.memo(() => {
         };
       }
 
-      groupedData[key].totalHours += sessionHours;
+      groupedData[key].totalHours = Number((groupedData[key].totalHours + sessionHours).toFixed(2));
 
       let attendedHours = 0;
       if (log.timeIn && log.timeout) {
         const [inH, inM] = log.timeIn.split(":").map(Number);
         const [outH, outM] = log.timeout.split(":").map(Number);
         attendedHours = (outH * 60 + outM - (inH * 60 + inM)) / 60;
-        attendedHours = Number(attendedHours.toFixed(3));
+        attendedHours = Number(attendedHours.toFixed(2));
       }
       groupedData[key].attendedHours += attendedHours;
 
