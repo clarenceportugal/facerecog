@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Box, Button, Typography, Paper } from '@mui/material';
+import { Box, Typography, Paper } from '@mui/material';
 
 const CameraTest: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);

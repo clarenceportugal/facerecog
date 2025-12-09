@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { useParams } from "react-router-dom";
 import DeanMain from "./DeanMain";
 import axios from "axios";
 import {

@@ -58,7 +58,6 @@ const DeanActivityHistory: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   const currentUser = localStorage.getItem("userName") || "Unknown User";
-  const currentUserId = localStorage.getItem("userId") || "";
 
   const fetchSystemActivities = async () => {
     try {
