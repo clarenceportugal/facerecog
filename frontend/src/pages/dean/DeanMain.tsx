@@ -21,11 +21,21 @@ import {
   AccessTime,
   Assessment,
   History,
+  Layers,
 } from "@mui/icons-material";
 import AdminHeader from "../../components/AdminHeader";
 
 const drawerWidth = 260;
 
+/**
+ * Applied sidebar design:
+ * - background: #3D1308
+ * - text: #F8E5EE
+ * - active background: #7B0D1E
+ * - hover: #9F2042
+ * - active right border: 5px solid #F8E5EE
+ * - borderRadius: 10px
+ */
 const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const CollegeName = localStorage.getItem("college") ?? "";
   const facultyId = localStorage.getItem("userId") ?? "";
@@ -48,6 +58,7 @@ const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       icon: <People />,
       path: `/programchair-info/${facultyId}`,
     },
+    { text: "Course & Block Management", icon: <Layers />, path: "/dean-course-block-management/:id" },
     {
       text: "Face Registration",
       icon: <Face />,
@@ -85,9 +96,7 @@ const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   return (
-    <Box
-      sx={{ display: "flex", backgroundColor: "#f4f6f8", minHeight: "100vh" }}
-    >
+    <Box sx={{ display: "flex", backgroundColor: "#f4f6f8", minHeight: "100vh" }}>
       <CssBaseline />
       <AdminHeader />
 
@@ -99,66 +108,60 @@ const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           "& .MuiDrawer-paper": {
             width: drawerWidth,
             boxSizing: "border-box",
-            backgroundColor: "#1e1e2d",
-            color: "#ffffff",
+            backgroundColor: "#3D1308",
+            color: "#F8E5EE",
           },
         }}
       >
         <Toolbar />
         <List>
-          {menuItems.map((item) => (
-            <React.Fragment key={item.text}>
-              {item.text === `${CollegeName} Staff Info` && (
-                <>
-                  <Typography
-                    variant="subtitle2"
-                    sx={{
-                      color: "#ffffff",
-                      textTransform: "uppercase",
-                      fontWeight: "bold",
-                      ml: 3,
-                      mt: 2,
-                      mb: 1,
-                      opacity: 0.7,
-                    }}
-                  >
-                    Faculty
-                  </Typography>
-                  <Divider
-                    sx={{
-                      backgroundColor: "rgba(255,255,255,0.2)",
-                      mx: 2,
-                      mb: 1,
-                    }}
-                  />
-                </>
-              )}
+          {menuItems.map((item) => {
+            // Resolve possible :id placeholder so active detection works consistently
+            const resolvedPath = item.path.includes(":id") ? item.path.replace(":id", facultyId) : item.path;
+            const isActive = activePage === resolvedPath;
 
-              <ListItemButton
-                onClick={() => handleNavigate(item.path)}
-                sx={{
-                  color: activePage === item.path ? "#1e88e5" : "#ffffff",
-                  backgroundColor:
-                    activePage === item.path
-                      ? "rgba(30,136,229,0.2)"
-                      : "transparent",
-                  borderRadius: "10px",
-                  mx: 2,
-                  my: 1,
-                  "&:hover": { backgroundColor: "rgba(30,136,229,0.3)" },
-                }}
-              >
-                <ListItemIcon
+            return (
+              <React.Fragment key={item.text}>
+                {item.text === `${CollegeName} Staff Info` && (
+                  <>
+                    <Typography
+                      variant="subtitle2"
+                      sx={{
+                        color: "#F8E5EE",
+                        textTransform: "uppercase",
+                        fontWeight: "bold",
+                        ml: 3,
+                        mt: 2,
+                        mb: 1,
+                        opacity: 0.7,
+                      }}
+                    >
+                      Faculty
+                    </Typography>
+                    <Divider sx={{ backgroundColor: "#4F1A0F", mx: 2, mb: 1 }} />
+                  </>
+                )}
+
+                <ListItemButton
+                  onClick={() => handleNavigate(resolvedPath)}
                   sx={{
-                    color: activePage === item.path ? "#1e88e5" : "#ffffff",
+                    color: "#F8E5EE",
+                    backgroundColor: isActive ? "#7B0D1E" : "transparent",
+                    borderRadius: "10px",
+                    mx: 2,
+                    my: 1,
+                    borderRight: isActive ? "5px solid #F8E5EE" : "5px solid transparent",
+                    "&:hover": {
+                      backgroundColor: "#9F2042",
+                    },
                   }}
                 >
-                  {item.icon}
-                </ListItemIcon>
-                <ListItemText primary={item.text} />
-              </ListItemButton>
-            </React.Fragment>
-          ))}
+                  <ListItemIcon sx={{ color: "#F8E5EE" }}>{item.icon}</ListItemIcon>
+                  <ListItemText primary={item.text} />
+                </ListItemButton>
+              </React.Fragment>
+            );
+          })}
         </List>
       </Drawer>
 

@@ -6,7 +6,9 @@ import Room from "../models/Room";
 import Course from "../models/Course";
 import Schedule from "../models/Schedule";
 import TempAccount from "../models/TempAccount";
+import Section from "../models/Section";
 import Log from "../models/AttendanceLogs";
+import Subject from "../models/Subject";
 import path from "path";
 import fs from "fs";
 import PizZip from "pizzip";
@@ -1011,5 +1013,112 @@ router.post(
     }
   }
 );
+
+router.get("/dean-subjects-by-course", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const courseQuery = (req.query.course as string | undefined)?.trim();
+    // Allowed default prefixes when no course supplied
+    const defaultPrefixes = ["IT", "IS"];
+
+    // Determine prefixes to match: either the last two chars of the supplied course, or default (IT|IS)
+    let prefixes: string[] = [];
+    if (courseQuery && courseQuery.length > 0) {
+      const lastTwo = courseQuery.toUpperCase().slice(-2);
+      prefixes = [lastTwo];
+    } else {
+      prefixes = defaultPrefixes;
+    }
+
+    // Build DB regex to pre-filter subjects that start with any of the desired prefixes (ignoring leading spaces)
+    // e.g. /^\\s*(?:IT|IS)/i
+    const prefixRegex = new RegExp(`^\\s*(?:${prefixes.map((p) => p.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")).join("|")})`, "i");
+
+    // Fetch matching subjects (DB-side pre-filter to avoid scanning entire collection if possible)
+    const subjects = await Subject.find({
+      courseCode: { $regex: prefixRegex },
+    }).lean();
+
+    // Deduplicate by normalized courseCode and keep first encountered _id
+    const subjectsMap = new Map<string, { _id?: string; courseCode: string; courseTitle: string }>();
+
+    subjects.forEach((s: any) => {
+      if (!s || !s.courseCode) return;
+
+      // Normalize stored courseCode (collapse spaces, uppercase)
+      const normalizedCourseCode = String(s.courseCode).trim().replace(/\s+/g, " ").toUpperCase();
+
+      // Extract the first TWO alphabetic letters from the stored courseCode (ignore digits/spaces/symbols)
+      // e.g. "IT 101" -> "IT", " I S101" -> "IS"
+      const letters = (String(s.courseCode).match(/[A-Za-z]/g) || []).slice(0, 2).join("").toUpperCase();
+
+      // Include only if extracted letters match one of the prefixes
+      if (prefixes.includes(letters)) {
+        if (!subjectsMap.has(normalizedCourseCode)) {
+          subjectsMap.set(normalizedCourseCode, {
+            _id: s._id ? String(s._id) : undefined,
+            courseCode: normalizedCourseCode,
+            courseTitle: s.courseTitle ?? "",
+          });
+        }
+      }
+    });
+
+    // Convert to array and sort
+    const result = Array.from(subjectsMap.values()).sort((a, b) =>
+      a.courseCode.localeCompare(b.courseCode, undefined, { numeric: true, sensitivity: "base" })
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching subjects dynamically:", error);
+    res.status(500).json({ message: "Error fetching subjects" });
+  }
+});
+
+function escapeRegExp(str: string) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+router.get("/dean-all-sections", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const collegeQuery = (req.query.college as string)?.trim();
+
+    if (!collegeQuery) {
+      res.status(400).json({ message: "college query parameter is required" });
+      return;
+    }
+
+    // Find college by its code (case-insensitive)
+    const escaped = escapeRegExp(collegeQuery);
+    const collegeDoc = await College.findOne({ code: { $regex: `^${escaped}$`, $options: "i" } }).lean();
+
+    if (!collegeDoc) {
+      res.status(404).json({ message: `College with code "${collegeQuery}" not found` });
+      return;
+    }
+
+    const collegeId = collegeDoc._id;
+
+    // Find sections whose `college` field references the found college _id
+    const sections = await Section.find({ college: collegeId }).lean();
+
+    // Return sections (you can map/shape fields here if you want)
+    res.json(
+      sections.map((s: any) => ({
+        _id: s._id,
+        college: s.college,
+        course: s.course,
+        section: s.section,
+        block: s.block,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        // include any other fields from the section as needed
+      }))
+    );
+  } catch (error) {
+    console.error("Error fetching sections:", error);
+    res.status(500).json({ message: "Error fetching sections" });
+  }
+});
 
 export default router;
