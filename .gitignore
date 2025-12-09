@@ -68,3 +68,5 @@ yarn-error.log*
 # Logs
 logs/
 *.log
+backend/offline_data.db-shm
+backend/offline_data.db-wal

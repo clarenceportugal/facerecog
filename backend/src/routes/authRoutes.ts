@@ -61,6 +61,233 @@ const generateRandomPassword = () => {
   return Math.floor(1000 + Math.random() * 9000).toString(); // e.g. "8342"
 };
 
+
+const FIXED_COLLEGE_ID = "67ff627e2fb6583dc49dccef";
+
+/**
+ * PUT /api/auth/edit-faculty/:id
+ */
+router.put("/edit-faculty/:id", async (req: Request, res: Response): Promise<void> => {
+  const facultyId = req.params.id;
+
+  try {
+    // basic validation for id
+    if (!facultyId || !mongoose.Types.ObjectId.isValid(facultyId)) {
+      res.status(400).json({ message: "Invalid or missing faculty id in parameters." });
+      return;
+    }
+
+    // destructure incoming body
+    const {
+      last_name,
+      first_name,
+      middle_name,
+      ext_name,
+      email,
+      username,
+      password,
+      role,
+      course: courseCode,
+      highestEducationalAttainment,
+      academicRank,
+      statusOfAppointment,
+      numberOfPrep,
+      totalTeachingLoad,
+      status, // optional
+    } = req.body;
+
+    // required fields check (your client demands these)
+    if (!last_name?.toString().trim() || !first_name?.toString().trim() || !email?.toString().trim()) {
+      res.status(400).json({ message: "First name, last name and email are required." });
+      return;
+    }
+
+    // fetch existing user (via service)
+    const existingUser = await UserService.findById(facultyId);
+    if (!existingUser) {
+      res.status(404).json({ message: "Faculty user not found." });
+      return;
+    }
+
+    // email uniqueness check (only when changed)
+    if (email && String(email) !== String(existingUser.email)) {
+      const byEmail = await UserService.findByEmail(String(email));
+      if (byEmail && String(byEmail._id) !== String(facultyId)) {
+        res.status(409).json({ message: "Email already exists." });
+        return;
+      }
+    }
+
+    // username uniqueness check (only when changed)
+    if (username && String(username) !== String(existingUser.username)) {
+      const byUsername = await UserService.findByUsername(String(username));
+      // check object exists before accessing _id
+      if (byUsername && String(byUsername._id) !== String(facultyId)) {
+        res.status(409).json({ message: "Username already exists." });
+        return;
+      }
+    }
+
+    // role validation (if provided)
+    if (role) {
+      const validRoles = ["superadmin", "instructor", "programchairperson", "dean"];
+      if (!validRoles.includes(role)) {
+        res.status(400).json({ message: "Invalid role." });
+        return;
+      }
+    }
+
+    // resolve course if provided (allow clearing course by sending null/empty)
+    let courseIdToSave: string | null | undefined = existingUser.course ?? null;
+    if (courseCode !== undefined) {
+      if (courseCode === "" || courseCode === null) {
+        courseIdToSave = null;
+      } else {
+        const courseDoc = await CourseService.findByCode(String(courseCode));
+        if (!courseDoc) {
+          res.status(400).json({ message: `Invalid course code: ${courseCode}` });
+          return;
+        }
+        courseIdToSave = courseDoc._id ?? courseDoc.id;
+      }
+    }
+
+    // Build update payload (only set fields that are provided)
+    const updatePayload: any = {};
+
+    if (last_name !== undefined) updatePayload.last_name = last_name;
+    if (first_name !== undefined) updatePayload.first_name = first_name;
+    if (middle_name !== undefined) updatePayload.middle_name = middle_name ?? "";
+    if (ext_name !== undefined) updatePayload.ext_name = ext_name ?? "";
+    if (email !== undefined) updatePayload.email = email;
+    if (username !== undefined) updatePayload.username = username;
+    if (role !== undefined) updatePayload.role = role;
+    if (status !== undefined) updatePayload.status = status;
+
+    // FORCE the college id you requested
+    updatePayload.college = FIXED_COLLEGE_ID;
+
+    // set course even if null to allow clearing it
+    updatePayload.course = courseIdToSave;
+
+    if (highestEducationalAttainment !== undefined) updatePayload.highestEducationalAttainment = highestEducationalAttainment;
+    if (academicRank !== undefined) updatePayload.academicRank = academicRank;
+    if (statusOfAppointment !== undefined) updatePayload.statusOfAppointment = statusOfAppointment;
+    if (numberOfPrep !== undefined) updatePayload.numberOfPrep = numberOfPrep;
+    if (totalTeachingLoad !== undefined) updatePayload.totalTeachingLoad = totalTeachingLoad;
+    updatePayload.updatedAt = new Date();
+
+    // Hash password only if provided and non-empty
+    if (password !== undefined && password !== null && String(password).trim() !== "") {
+      const SALT_ROUNDS = 10;
+      updatePayload.password = await bcrypt.hash(String(password), SALT_ROUNDS);
+    }
+
+    // Perform Mongoose update (no UserService.updateById required)
+    const updatedUser = await UserModel.findByIdAndUpdate(
+      facultyId,
+      { $set: updatePayload },
+      { new: true, runValidators: true }
+    )
+      .lean()
+      .exec();
+
+    if (!updatedUser) {
+      res.status(500).json({ message: "Failed to update faculty account." });
+      return;
+    }
+
+    // Optional: notify via email if email changed and we're online
+    if (!isOfflineMode() && email && String(email) !== String(existingUser.email)) {
+      const mailOptions = {
+        from: "Eduvision Team",
+        to: email,
+        subject: "Your account email was updated",
+        text: `Hello ${updatedUser.first_name},
+
+Your account email has been updated successfully.
+
+If this wasn't you, please contact support immediately.
+
+Thanks,
+EduVision Team`,
+      };
+
+      transporter.sendMail(mailOptions, (err: any, info: any) => {
+        if (err) console.error("Error sending email:", err);
+        else console.log("Email notification sent:", info?.response ?? info);
+      });
+    }
+
+    // sanitize response (remove password)
+    const sanitized = { ...updatedUser } as any;
+    if (sanitized.password) delete sanitized.password;
+
+    // Return { data: sanitized } so client code works unchanged
+    res.status(200).json({ data: sanitized });
+  } catch (err) {
+    console.error("Edit faculty error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// Update faculty status
+router.put("/faculty/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate id
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      res.status(400).json({ success: false, message: "Invalid faculty id" });
+      return;
+    }
+
+    // Validate status
+    const ALLOWED_STATUSES = new Set(["forverification", "active", "inactive", "permanent"]);
+    if (typeof status !== "string" || !ALLOWED_STATUSES.has(status)) {
+      res.status(400).json({
+        success: false,
+        message: `Invalid status. Allowed values: ${Array.from(ALLOWED_STATUSES).join(", ")}`,
+      });
+      return;
+    }
+
+    // Attempt to update via UserService (works in offline/online modes)
+    let updated: any = null;
+    try {
+      // Some UserService.update implementations return the updated doc, some return a boolean.
+      // We attempt update and then fetch the doc to be safe.
+      await UserService.update(id, { status });
+      updated = await UserService.findById(id);
+    } catch (svcErr) {
+      // If UserService is not available or failed, fallback to direct mongoose update
+      console.warn("UserService.update failed or not available, falling back to UserModel.findByIdAndUpdate", svcErr);
+      updated = await UserModel.findByIdAndUpdate(id, { $set: { status } }, { new: true, runValidators: true }).select("-password");
+    }
+
+    if (!updated) {
+      res.status(404).json({ success: false, message: "Faculty not found" });
+      return;
+    }
+
+    // Ensure password is not returned if UserService returned raw document
+    if (updated.password) {
+      // convert to object and delete if necessary
+      const obj = updated.toObject ? updated.toObject() : { ...updated };
+      delete obj.password;
+      res.json({ success: true, data: obj });
+      return;
+    }
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    console.error("Error updating faculty status:", err);
+    res.status(500).json({ success: false, message: "Server error while updating status" });
+  }
+});
+
 router.post(
   "/upload-faculty-profile-photo",
   facultyProfileUpload.single("image"),
