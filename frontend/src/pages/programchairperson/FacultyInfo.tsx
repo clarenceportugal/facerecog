@@ -1,1015 +1,617 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import AdminMain from "./AdminMain";
+import Swal from "sweetalert2";
+import DeleteIcon from "@mui/icons-material/Delete";
+import AddIcon from "@mui/icons-material/Add";
+import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
+import { useFacultyContext } from "../../context/FacultyContext";
+import { API_BASE_URL } from "../../utils/api";
 import {
   Box,
-  Grid,
-  Card,
-  CardContent,
   Typography,
-  TextField,
-  Button,
   Table,
-  TableHead,
   TableBody,
-  TableRow,
   TableCell,
   TableContainer,
-  IconButton,
+  TableHead,
+  TableRow,
   Paper,
-  Snackbar,
-  Alert,
-  Stack,
-  AlertColor,
-  CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
+  Grid,
+  IconButton,
+  TextField,
+  MenuItem,
+  SelectChangeEvent,
+  Menu,
+  Chip,
+  TablePagination,
+  Avatar,
 } from "@mui/material";
-import { Add, Edit, Delete, Layers } from "@mui/icons-material";
-import AdminMain from "./AdminMain";
+import InfoModal from "../../components/InfoModal";
+import BlockIcon from "@mui/icons-material/Block";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
+import AddFacultyModal from "../../components/AddFacultyModal";
 
-type Section = {
-  _id?: string;
-  college?: string; // ObjectId string
-  course?: string;
-  section?: string;
-  block?: string;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-type Subject = {
-  _id?: string;
-  id: number;
-  code: string;
-  name: string;
-  courseId: number; // legacy field - no longer mapped to hardcoded courses
-};
-
-type SnackState = {
-  open: boolean;
-  message: string;
-  severity: AlertColor;
-};
-
-const API_SUBJECTS_IT = "http://localhost:5000/api/auth/subjects-it"; // keep for POST/PUT/DELETE
-const API_SUBJECTS_BY_COURSE = "http://localhost:5000/api/auth/subjects-by-course"; // new dynamic GET route
-const API_ALL_SECTIONS = "http://localhost:5000/api/auth/all-sections"; // expects ?course=COURSECODE
-const API_ADD_SECTION = "http://localhost:5000/api/auth/add-section";
-const API_SECTION_ROOT = "http://localhost:5000/api/auth"; // PUT/DELETE at /:id
-
-const LOCAL_KEYS = ["selectedCourse", "course", "currentCourse", "courseCode"];
-
-// fixed college ObjectId (still used for requests)
-const FIXED_COLLEGE_ID = "67ff627e2fb6583dc49dccef";
-
-const CourseBlockManagement: React.FC = () => {
-  // Sections (left) - loaded from API using a course query on mount (if stored)
-  const [sections, setSections] = useState<Section[]>([]);
-  const [loadingSections, setLoadingSections] = useState<boolean>(false);
-
-  // stored course read from localStorage (display-only)
-  const [courseStored, setCourseStored] = useState<string | null>(null);
-
-  // search input for filtering sections (one-line search bar)
-  const [sectionsSearch, setSectionsSearch] = useState<string>("");
-
-  // inputs for adding a new section/block
-  const [newSection, setNewSection] = useState<string>("");
-  const [newBlock, setNewBlock] = useState<string>("");
-
-  // Subjects (right) - no hardcoded data; loaded from API
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [loadingSubjects, setLoadingSubjects] = useState<boolean>(false);
-
-  // Form states (for adding subjects)
-  const [subjectName, setSubjectName] = useState<string>("");
-  // subjectCode initial will be set from courseStored (last 2 letters uppercase + space)
-  const [subjectCode, setSubjectCode] = useState<string>("");
-
-  // Search state for subjects
-  const [searchTerm, setSearchTerm] = useState<string>("");
-
-  // Snackbar
-  const [snack, setSnack] = useState<SnackState>({
-    open: false,
-    message: "",
-    severity: "success",
+const FacultyInfo: React.FC = () => {
+  const CourseName = localStorage.getItem("course") ?? "";
+  const CollegeName = localStorage.getItem("college") ?? "";
+  const { facultyList, setFacultyList } = useFacultyContext();
+  const [selectedFaculty, setSelectedFaculty] = useState<string | null>(null);
+  const [openModal, setOpenModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [newFaculty, setNewFaculty] = useState({
+    last_name: "",
+    first_name: "",
+    middle_name: "",
+    username: "",
+    email: "",
+    password: "",
+    role: "instructor",
+    college: CollegeName,
+    course: CourseName,
+    highestEducationalAttainment: "",
+    academicRank: "",
+    statusOfAppointment: "",
+    numberOfPrep: 0,
+    totalTeachingLoad: 0,
   });
+  const [showPassword, setShowPassword] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState("all");
+  const [statusAnchorEl, setStatusAnchorEl] = useState<null | HTMLElement>(
+    null
+  );
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
-  const showSnack = (message: string, severity: AlertColor = "success") => {
-    setSnack({ open: true, message, severity });
-  };
-  const handleCloseSnack = () => setSnack((s) => ({ ...s, open: false }));
+  const statusMenuOpen = Boolean(statusAnchorEl);
 
-  // Edit dialog state for subjects (existing)
-  const [editDialogOpen, setEditDialogOpen] = useState<boolean>(false);
-  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
-  const [editCode, setEditCode] = useState<string>("");
-  const [editName, setEditName] = useState<string>("");
-  const [editSaving, setEditSaving] = useState<boolean>(false);
-
-  // Edit dialog state for sections
-  const [editSectionDialogOpen, setEditSectionDialogOpen] = useState<boolean>(false);
-  const [editingSection, setEditingSection] = useState<Section | null>(null);
-  const [editSectionValue, setEditSectionValue] = useState<string>("");
-  const [editBlockValue, setEditBlockValue] = useState<string>("");
-  const [editSectionSaving, setEditSectionSaving] = useState<boolean>(false);
-
-  // Deleting state per-id
-  const [deletingSectionId, setDeletingSectionId] = useState<string | null>(null);
-  // Adding state
-  const [addingSection, setAddingSection] = useState<boolean>(false);
-
-  // Helpers for normalization (same rules as backend)
-  const normalizeCode = (code: string) => String(code).trim().replace(/\s+/g, " ").toUpperCase();
-  const normalizeTitle = (t: string) => String(t ?? "").trim();
-
-  // Try to read course from a few common localStorage keys
-  const readCourseFromLocalStorage = (): string | null => {
-    try {
-      for (const k of LOCAL_KEYS) {
-        const v = localStorage.getItem(k);
-        if (v && v.trim().length > 0) return v.trim();
-      }
-    } catch (err) {
-      console.warn("LocalStorage not available:", err);
-    }
-    return null;
+  const handleStatusSelect = (status: string) => {
+    setSelectedStatus(status);
+    handleStatusClose();
   };
 
-  // Fetch sections for a given course
-  const fetchSections = async (course: string | null) => {
-    if (!course?.trim()) {
-      setSections([]);
-      return;
-    }
-
-    setLoadingSections(true);
-    try {
-      const resp = await fetch(`${API_ALL_SECTIONS}?course=${encodeURIComponent(course.trim())}`);
-      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-      const data = (await resp.json()) as Array<any>;
-      const mapped: Section[] = data.map((s: any) => ({
-        _id: s._id,
-        college: s.college,
-        course: s.course,
-        section: s.section,
-        block: s.block,
-        createdAt: s.createdAt,
-        updatedAt: s.updatedAt,
-      }));
-      setSections(mapped);
-    } catch (err) {
-      console.error("Failed to load sections:", err);
-      showSnack("Failed to load sections from server", "error");
-    } finally {
-      setLoadingSections(false);
-    }
+  const handleStatusClick = (event: React.MouseEvent<HTMLElement>) => {
+    setStatusAnchorEl(event.currentTarget);
   };
 
-  // Fetch subjects for a given course using the new backend endpoint
-  const fetchSubjectsByCourse = async (course: string | null) => {
-    if (!course?.trim()) {
-      setSubjects([]);
-      return;
-    }
+  const handleStatusClose = () => {
+    setStatusAnchorEl(null);
+  };
 
-    setLoadingSubjects(true);
-    const controller = new AbortController();
-    try {
-      const resp = await fetch(
-        `${API_SUBJECTS_BY_COURSE}?course=${encodeURIComponent(course.trim())}`,
-        { signal: controller.signal }
-      );
-      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-      const data = (await resp.json()) as Array<any>;
+  const togglePasswordVisibility = () => {
+    setShowPassword((prev) => !prev);
+  };
 
-      // Map backend output to Subject[] and try to capture any server id shape
-      const mapped: Subject[] = (data ?? []).map((item: any, idx: number) => {
-        const normalizedCode = normalizeCode(
-          item.courseCode ?? item.courseCodeNormalized ?? item.code ?? ""
-        );
-        const normalizedTitle = normalizeTitle(
-          item.courseTitle ?? item.courseTitleNormalized ?? item.title ?? item.name ?? ""
-        );
-        // capture server id from common fields (_id, _idStr, id)
-        const serverId = item._id ?? item._idStr ?? item.id ?? undefined;
-        return {
-          _id: serverId,
-          // local numeric id (used for React keys if _id missing)
-          id: Date.now() + idx,
-          code: normalizedCode,
-          name: normalizedTitle,
-          courseId: 0,
-        };
+  const random4Digit = (): string => {
+    return Math.floor(1000 + Math.random() * 9000).toString();
+  };
+
+  const handleOpenModal = () => {
+    setNewFaculty({
+      last_name: "",
+      first_name: "",
+      middle_name: "",
+      username: "",
+      email: "",
+      password: random4Digit(),
+      role: "instructor",
+      college: CollegeName,
+      course: CourseName,
+      highestEducationalAttainment: "",
+      academicRank: "",
+      statusOfAppointment: "",
+      numberOfPrep: 0,
+      totalTeachingLoad: 0,
+    });
+    setOpenModal(true);
+  };
+
+  const handleCloseModal = (resetForm = true) => {
+    setOpenModal(false);
+    if (resetForm) {
+      setNewFaculty({
+        last_name: "",
+        first_name: "",
+        middle_name: "",
+        username: "",
+        email: "",
+        password: "",
+        role: "instructor",
+        college: "",
+        course: "",
+        highestEducationalAttainment: "",
+        academicRank: "",
+        statusOfAppointment: "",
+        numberOfPrep: 0,
+        totalTeachingLoad: 0,
       });
-
-      setSubjects(mapped);
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        console.error("Failed to fetch subjects by course:", err);
-        showSnack("Failed to load subjects from server", "error");
-      }
-    } finally {
-      setLoadingSubjects(false);
     }
   };
 
-  // On mount: read stored course and fetch sections automatically
-  useEffect(() => {
-    const storedCourse = readCourseFromLocalStorage();
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setNewFaculty((prev) => ({ ...prev, [name]: value }));
+  };
 
-    setCourseStored(storedCourse ?? null);
+  const handleRoleChange = (event: SelectChangeEvent<string>) => {
+    setNewFaculty((prev) => ({ ...prev, role: event.target.value }));
+  };
 
-    if (storedCourse) fetchSections(storedCourse);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // When courseStored changes -> set initial subjectCode prefix and fetch subjects for that course
-  useEffect(() => {
-    if (!courseStored) {
-      setSubjectCode("");
-      setSubjects([]);
-      return;
-    }
-
-    const cleaned = String(courseStored).trim();
-    // last two letters (if course shorter than 2 chars, use entire string)
-    const lastTwo = cleaned.length >= 2 ? cleaned.slice(-2) : cleaned;
-    const prefix = lastTwo.toUpperCase();
-    // set initial subject code to e.g. "IT "
-    setSubjectCode(prefix ? `${prefix} ` : "");
-    // fetch subjects from backend for this course
-    fetchSubjectsByCourse(cleaned);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseStored]);
-
-  // Add subject -> POST /subjects-it (unchanged)
-  const handleAddSubject = async (): Promise<void> => {
-    if (!subjectName.trim() || !subjectCode.trim()) {
-      showSnack("Please provide subject code and name.", "warning");
-      return;
-    }
-
-    const normalizedCode = normalizeCode(subjectCode);
-    const normalizedTitle = normalizeTitle(subjectName);
-
-    // Optimistic UI id
-    const tempId = Date.now() + Math.floor(Math.random() * 1000);
-    const newSubjectLocal: Subject = {
-      id: tempId,
-      code: normalizedCode,
-      name: normalizedTitle,
-      courseId: 0,
-    };
-
-    // Optimistically add to UI
-    setSubjects((s) => [newSubjectLocal, ...s]);
-    setSubjectName("");
-    setSubjectCode("");
-
-    try {
-      const resp = await fetch(API_SUBJECTS_IT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ courseCode: normalizedCode, courseTitle: normalizedTitle }),
+  const handleAddAccount = async () => {
+    if (
+      !newFaculty.last_name.trim() ||
+      !newFaculty.first_name.trim() ||
+      !newFaculty.email.trim() ||
+      !newFaculty.password.trim()
+    ) {
+      handleCloseModal(false);
+      Swal.fire({
+        icon: "warning",
+        title: "Missing Fields",
+        text: "Please fill out all required fields.",
+        timer: 2000,
+        timerProgressBar: true,
+        willClose: () => {
+          setOpenModal(true);
+        },
       });
-
-      const json = await resp.json();
-      if (!resp.ok) {
-        setSubjects((s) => s.filter((x) => x.id !== tempId));
-        showSnack(json?.message ?? "Failed to add subject", "error");
-        return;
-      }
-
-      const created = json?.data ?? json;
-      const serverId = created?._id ?? created?.id ?? undefined;
-      const serverCourseCode = created?.courseCode ?? created?.courseCodeNormalized ?? normalizedCode;
-      const serverCourseTitle = created?.courseTitle ?? created?.courseTitleNormalized ?? normalizedTitle;
-
-      setSubjects((s) =>
-        s.map((x) =>
-          x.id === tempId
-            ? {
-                ...x,
-                _id: serverId,
-                code: normalizeCode(serverCourseCode),
-                name: normalizeTitle(serverCourseTitle),
-              }
-            : x
-        )
-      );
-
-      showSnack("Subject added", "success");
-    } catch (err) {
-      console.error("Add subject error:", err);
-      setSubjects((s) => s.filter((x) => x.id !== tempId));
-      showSnack("Network error while adding subject", "error");
-    }
-  };
-
-  // Delete subject -> DELETE /subjects-it/:id (unchanged)
-  const handleDeleteSubject = async (subject: Subject): Promise<void> => {
-    if (!subject._id) {
-      showSnack("Cannot delete: server id missing. Try refreshing the list.", "warning");
       return;
     }
 
-    const prev = subjects;
-    setSubjects((s) => s.filter((x) => x._id !== subject._id));
-
     try {
-      const resp = await fetch(`${API_SUBJECTS_IT}/${subject._id}`, { method: "DELETE" });
-      const json = await resp.json();
-      if (!resp.ok) {
-        setSubjects(prev);
-        showSnack(json?.message ?? "Failed to delete subject", "error");
-        return;
-      }
-      showSnack("Subject deleted", "info");
-    } catch (err) {
-      console.error("Delete subject error:", err);
-      setSubjects(prev);
-      showSnack("Network error while deleting subject", "error");
+      console.log('[ADD FACULTY] Sending request to:', `${API_BASE_URL}/api/auth/faculty`);
+      console.log('[ADD FACULTY] Data:', newFaculty);
+      
+      const res = await axios.post(
+        `${API_BASE_URL}/api/auth/faculty`,
+        newFaculty
+      );
+      
+      console.log('[ADD FACULTY] Success:', res.data);
+      setFacultyList([...facultyList, res.data]);
+      
+      Swal.fire({
+        icon: "success",
+        title: "Success",
+        text: "Faculty account added successfully!",
+      });
+      handleCloseModal();
+    } catch (error: any) {
+      handleCloseModal(false);
+      console.error("[ADD FACULTY] Error:", error);
+      console.error("[ADD FACULTY] Error response:", error.response?.data);
+      
+      Swal.fire({
+        icon: "error",
+        title: "Error",
+        text: error.response?.data?.message || "Failed to add faculty account. Check console for details.",
+        timer: 2000,
+        timerProgressBar: true,
+        willClose: () => {
+          setOpenModal(true);
+        },
+      });
     }
   };
 
-  // Open edit dialog for subjects (improved: prefer current subject from state so we capture _id if available)
-  const openEditDialog = (subject: Subject) => {
-    // Prefer the current subject from state so we have any server-provided _id
-    const fromState =
-      subjects.find((s) => (subject._id ? s._id === subject._id : s.id === subject.id)) ?? subject;
-
-    console.debug("openEditDialog called:", { subject, fromState });
-    setEditingSubject(fromState);
-    setEditCode(fromState.code);
-    setEditName(fromState.name);
-    setEditDialogOpen(true);
-  };
-
-  const closeEditDialog = () => {
-    setEditDialogOpen(false);
-    setEditingSubject(null);
-    setEditCode("");
-    setEditName("");
-    setEditSaving(false);
-  };
-
-  // Save edit for subjects (improved: try harder to find server id before falling back to local-only update)
-  const handleSaveEdit = async () => {
-    if (!editingSubject) return;
-
-    const newCode = normalizeCode(editCode);
-    const newName = normalizeTitle(editName);
-
-    console.debug("handleSaveEdit start", {
-      editingSubject,
-      editCode,
-      editName,
-      normalized: { newCode, newName },
+  const handleDeleteAccount = async (id: string) => {
+    const confirmation = await Swal.fire({
+      title: "Are you sure?",
+      text: "This action cannot be undone!",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#3085d6",
+      confirmButtonText: "Yes, delete it!",
     });
 
-    if (!newCode || !newName) {
-      showSnack("Code and name are required", "warning");
-      return;
-    }
-
-    // Try to determine a server id from the editingSubject or by looking up
-    // the subject in the current subjects array (handles cases where editingSubject
-    // is stale or lost _id).
-    let serverId: string | undefined;
-
-    // 1) try editingSubject._id
-    if (editingSubject._id) {
-      serverId = editingSubject._id;
-      console.debug("serverId found from editingSubject._id", serverId);
-    }
-
-    // 2) try find by numeric local id -> _id
-    if (!serverId) {
-      const byLocalId = subjects.find((s) => s.id === editingSubject.id)?._id;
-      if (byLocalId) {
-        serverId = byLocalId;
-        console.debug("serverId found by matching local numeric id", serverId);
-      } else {
-        console.debug("no serverId found by local numeric id");
-      }
-    }
-
-    // 3) try find by original code+name (exact match)
-    if (!serverId) {
-      const byCodeName = subjects.find((s) => s.code === editingSubject.code && s.name === editingSubject.name)?._id;
-      if (byCodeName) {
-        serverId = byCodeName;
-        console.debug("serverId found by matching code+name", serverId);
-      } else {
-        console.debug("no serverId found by matching code+name");
-      }
-    }
-
-    if (!serverId) {
-      // No server id found — update locally but clearly warn the user
-      console.warn("No serverId found for subject. Performing local-only update.", {
-        editingSubject,
-        newCode,
-        newName,
-      });
-
-      setSubjects((s) =>
-        s.map((x) => (x.id === editingSubject.id ? { ...x, code: newCode, name: newName } : x))
-      );
-      showSnack("Updated locally (server id missing). Refresh or re-fetch to persist.", "warning");
-      closeEditDialog();
-      return;
-    }
-
-    setEditSaving(true);
-    const prev = subjects;
-    try {
-      const url = `${API_SUBJECTS_IT}/${serverId}`;
-      const payload = { courseCode: newCode, courseTitle: newName };
-      console.debug("Sending PUT to server", { url, payload });
-
-      const resp = await fetch(url, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      let json: any = null;
+    if (confirmation.isConfirmed) {
       try {
-        json = await resp.json();
-      } catch (parseErr) {
-        console.error("Failed to parse JSON response from PUT", parseErr);
+        console.log('[DELETE FACULTY] Deleting faculty ID:', id);
+        await axios.delete(`${API_BASE_URL}/api/auth/faculty/${id}`);
+        setFacultyList(facultyList.filter((faculty) => faculty._id !== id));
+        if (selectedFaculty === id) {
+          setSelectedFaculty(null);
+        }
+        Swal.fire({
+          icon: "success",
+          title: "Deleted!",
+          text: "The faculty account has been deleted successfully.",
+        });
+      } catch (error) {
+        console.error("Error deleting account:", error);
+        Swal.fire({
+          icon: "error",
+          title: "Oops...",
+          text: "Something went wrong! Unable to delete the account.",
+        });
       }
+    }
+  };
 
-      console.debug("PUT response", { status: resp.status, ok: resp.ok, body: json });
+  const handleSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(event.target.value.toLowerCase());
+  };
 
-      if (!resp.ok) {
-        console.error("Server returned non-OK from PUT", { status: resp.status, body: json });
-        showSnack(json?.message ?? "Failed to update subject", "error");
-        setEditSaving(false);
-        return;
+  // Get current logged-in user ID to exclude from list
+  const currentUserId = localStorage.getItem("userId");
+
+  const filteredFacultyList = facultyList.filter((faculty) => {
+    // ⚡ EXCLUDE CURRENT USER: Don't show the logged-in program chair in the faculty list
+    if (faculty._id === currentUserId) {
+      return false;
+    }
+
+    const fullName = `${faculty.last_name}, ${faculty.first_name} ${
+      faculty.middle_name || ""
+    }`.toLowerCase();
+    const matchesSearch =
+      fullName.includes(searchQuery) ||
+      faculty.username.toLowerCase().includes(searchQuery) ||
+      faculty.email.toLowerCase().includes(searchQuery);
+
+    const matchesStatus =
+      selectedStatus === "all" ||
+      faculty.status.toLowerCase() === selectedStatus.toLowerCase();
+
+    return matchesSearch && matchesStatus;
+  });
+
+  const [openInfoModal, setOpenInfoModal] = useState(false);
+  const [selectedFacultyInfo, setSelectedFacultyInfo] = useState<any>(null);
+
+  const handleOpenInfoModal = (faculty: any) => {
+    setSelectedFacultyInfo(faculty);
+    setOpenInfoModal(true);
+  };
+
+  const handleCloseInfoModal = () => {
+    setSelectedFacultyInfo(null);
+    setOpenInfoModal(false);
+  };
+
+  const generateUsername = (firstName: string, lastName: string, middleName?: string) => {
+    // Different construction: first initial + last name (up to 5 chars) + first name (up to 3 chars)
+    const firstInitial = firstName.charAt(0).toUpperCase();
+    const lastPart = lastName.substring(0, Math.min(5, lastName.length)).toUpperCase();
+    const firstPart = firstName.substring(0, Math.min(3, firstName.length)).toUpperCase();
+    const middle = middleName ? middleName.charAt(0).toUpperCase() : '';
+    
+    if (middle) {
+      return firstInitial + lastPart + middle + firstPart;
+    }
+    return firstInitial + lastPart + firstPart;
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (newFaculty.first_name && newFaculty.last_name) {
+        const username = generateUsername(
+          newFaculty.first_name,
+          newFaculty.last_name,
+          newFaculty.middle_name
+        );
+        setNewFaculty((prev) => ({ ...prev, username }));
       }
+    }, 2000);
 
-      const updated = json?.data ?? json;
-      const updatedCode = normalizeCode(updated?.courseCode ?? newCode);
-      const updatedTitle = normalizeTitle(updated?.courseTitle ?? newName);
+    return () => clearTimeout(timer);
+  }, [newFaculty.first_name, newFaculty.last_name]);
 
-      console.debug("Applying update to local state", { serverId, updated });
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
-      // Update state matching either _id or the local id (fallback)
-      setSubjects((s) =>
-        s.map((x) =>
-          (x._id && x._id === serverId) || x.id === editingSubject.id
-            ? { ...x, _id: serverId, code: updatedCode, name: updatedTitle }
-            : x
-        )
-      );
-
-      showSnack("Subject updated", "success");
-      closeEditDialog();
-    } catch (err) {
-      console.error("Edit subject error (network/exception):", err, { serverId });
-      setSubjects(prev);
-      showSnack("Network error while updating subject", "error");
-    } finally {
-      setEditSaving(false);
-    }
+  const handleChangePage = (_: unknown, newPage: number) => {
+    setPage(newPage);
   };
 
-  // Filtered subjects by search term
-  const filteredSubjects = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-    if (!q) return subjects;
-    return subjects.filter((s) => s.code.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
-  }, [subjects, searchTerm]);
-
-  // Filtered sections by the one-line search bar
-  const filteredSections = useMemo(() => {
-    const q = sectionsSearch.trim().toLowerCase();
-    if (!q) return sections;
-    return sections.filter(
-      (sec) =>
-        String(sec.section ?? "").toLowerCase().includes(q) ||
-        String(sec.block ?? "").toLowerCase().includes(q) ||
-        String(sec.course ?? "").toLowerCase().includes(q)
-    );
-  }, [sections, sectionsSearch]);
-
-  // Add Section -> POST /add-section (uses FIXED_COLLEGE_ID)
-  const handleAddSection = async () => {
-    const course = courseStored?.trim();
-    const collegeId = FIXED_COLLEGE_ID;
-
-    if (!course) {
-      showSnack("No stored course found. Please set course in localStorage first.", "warning");
-      return;
-    }
-    if (!newSection.trim()) {
-      showSnack("Please enter a section.", "warning");
-      return;
-    }
-
-    setAddingSection(true);
-
-    // optimistic local item
-    const tempId = `local-${Date.now()}`;
-    const newSecLocal: Section = {
-      _id: tempId,
-      course,
-      section: newSection.trim(),
-      block: newBlock.trim() || undefined,
-      college: collegeId,
-      updatedAt: new Date().toISOString(),
-    };
-    setSections((s) => [newSecLocal, ...s]);
-    setNewSection("");
-    setNewBlock("");
-
-    try {
-      const resp = await fetch(API_ADD_SECTION, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          course,
-          section: newSecLocal.section,
-          block: newSecLocal.block ?? null,
-          college: collegeId,
-        }),
-      });
-
-      const json = await resp.json();
-      if (!resp.ok) {
-        // rollback optimistic add
-        setSections((s) => s.filter((x) => x._id !== tempId));
-        showSnack(json?.message ?? "Failed to add section", "error");
-        setAddingSection(false);
-        return;
-      }
-
-      const created = json?.data ?? json;
-      // replace local item with server-backed item
-      setSections((s) =>
-        s.map((x) =>
-          x._id === tempId
-            ? {
-                ...x,
-                _id: created?._id ?? created?.id ?? x._id,
-                course: created?.course ?? x.course,
-                section: created?.section ?? x.section,
-                block: created?.block ?? x.block,
-                college: created?.college ?? x.college,
-                createdAt: created?.createdAt ?? x.createdAt,
-                updatedAt: created?.updatedAt ?? x.updatedAt,
-              }
-            : x
-        )
-      );
-
-      showSnack("Section added", "success");
-    } catch (err) {
-      console.error("Add section error:", err);
-      // rollback optimistic add
-      setSections((s) => s.filter((x) => x._id !== tempId));
-      showSnack("Network error while adding section", "error");
-    } finally {
-      setAddingSection(false);
-    }
+  const handleChangeRowsPerPage = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
   };
 
-  // Open edit dialog for section
-  const openEditSectionDialog = (sec: Section) => {
-    setEditingSection(sec);
-    setEditSectionValue(sec.section ?? "");
-    setEditBlockValue(sec.block ?? "");
-    setEditSectionDialogOpen(true);
-  };
-
-  const closeEditSectionDialog = () => {
-    setEditSectionDialogOpen(false);
-    setEditingSection(null);
-    setEditSectionValue("");
-    setEditBlockValue("");
-    setEditSectionSaving(false);
-  };
-
-  // Save edit section -> PUT /:id (sends FIXED_COLLEGE_ID)
-  const handleSaveEditSection = async () => {
-    if (!editingSection) return;
-    if (!editingSection._id) {
-      showSnack("Cannot edit: section id missing", "warning");
-      closeEditSectionDialog();
-      return;
-    }
-
-    // validate
-    if (!editSectionValue.trim()) {
-      showSnack("Section cannot be empty", "warning");
-      return;
-    }
-
-    setEditSectionSaving(true);
-
-    const prevSections = sections;
-    // optimistic local update
-    setSections((s) =>
-      s.map((x) =>
-        x._id === editingSection._id ? { ...x, section: editSectionValue.trim(), block: editBlockValue.trim() || undefined } : x
-      )
-    );
-
-    try {
-      const resp = await fetch(`${API_SECTION_ROOT}/${editingSection._id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          section: editSectionValue.trim(),
-          block: editBlockValue.trim() || null,
-          college: FIXED_COLLEGE_ID, // always send fixed college id
-        }),
-      });
-
-      const json = await resp.json();
-      if (!resp.ok) {
-        // rollback
-        setSections(prevSections);
-        showSnack(json?.message ?? "Failed to update section", "error");
-        setEditSectionSaving(false);
-        return;
-      }
-
-      const updated = json?.data ?? json;
-      const trimmedBlock = editBlockValue.trim();
-
-      // replace with server-backed updated doc (use ternary for block)
-      setSections((s) =>
-        s.map((x) =>
-          x._id === editingSection._id
-            ? {
-                ...x,
-                section: updated?.section ?? editSectionValue.trim(),
-                block: updated?.block ?? (trimmedBlock === "" ? undefined : trimmedBlock),
-                course: updated?.course ?? x.course,
-                college: updated?.college ?? FIXED_COLLEGE_ID,
-                updatedAt: updated?.updatedAt ?? new Date().toISOString(),
-              }
-            : x
-        )
-      );
-
-      showSnack("Section updated", "success");
-      closeEditSectionDialog();
-    } catch (err) {
-      console.error("Edit section error:", err);
-      setSections(prevSections);
-      showSnack("Network error while updating section", "error");
-      setEditSectionSaving(false);
-    }
-  };
-
-  // Delete section -> DELETE /:id
-  const handleDeleteSection = async (sec: Section) => {
-    const id = sec._id; // narrow the possibly-undefined id into a local variable
-    if (!id) {
-      showSnack("Cannot delete: section id missing", "warning");
-      return;
-    }
-
-    const ok = window.confirm(`Delete section "${sec.section ?? ""}"? This cannot be undone.`);
-    if (!ok) return;
-
-    // id is now a string (not undefined)
-    setDeletingSectionId(id);
-    const prev = sections;
-    // optimistic removal
-    setSections((s) => s.filter((x) => x._id !== id));
-
-    try {
-      const resp = await fetch(`${API_SECTION_ROOT}/${id}`, { method: "DELETE" });
-      const json = await resp.json();
-      if (!resp.ok) {
-        // rollback
-        setSections(prev);
-        showSnack(json?.message ?? "Failed to delete section", "error");
-        setDeletingSectionId(null);
-        return;
-      }
-      showSnack("Section deleted", "info");
-    } catch (err) {
-      console.error("Delete section error:", err);
-      setSections(prev);
-      showSnack("Network error while deleting section", "error");
-    } finally {
-      setDeletingSectionId(null);
-    }
-  };
+  const paginatedFacultyList = filteredFacultyList.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage
+  );
 
   return (
     <AdminMain>
-      <Box sx={{ p: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
-          <Layers sx={{ fontSize: 36 }} />
-          <Typography variant="h4" component="h1">
-            Section & Subject Management
-          </Typography>
-        </Stack>
-
-        <Grid container spacing={3}>
-          {/* Left: Sections */}
-          <Grid item xs={12} md={6}>
-            <Card sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Sections
-                </Typography>
-
-                {/* One-line search bar (replaces previous course-code + Load button) */}
-                <Box sx={{ mb: 2 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Search sections by section, block, or course..."
-                    value={sectionsSearch}
-                    onChange={(e) => setSectionsSearch(e.target.value)}
-                    InputProps={{ "aria-label": "search-sections" }}
-                  />
-                </Box>
-
-                {/* Row: readonly course (from localStorage) | section input | block input | add button */}
-                <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                  <Grid item xs={12} sm={5}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Course"
-                      value={(courseStored ?? "").toUpperCase()}
-                      placeholder="No course in localStorage"
-                      InputProps={{ readOnly: true }}
-                    />
-                  </Grid>
-
-                  <Grid item xs={6} sm={3}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Section"
-                      value={newSection}
-                      onChange={(e) => setNewSection(e.target.value)}
-                      placeholder="e.g. 1"
-                    />
-                  </Grid>
-
-                  <Grid item xs={4} sm={2}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Block"
-                      value={newBlock}
-                      onChange={(e) => setNewBlock(e.target.value)}
-                      placeholder="e.g. B"
-                    />
-                  </Grid>
-
-                  <Grid item xs={2} sm={2}>
-                    <Button
-                      variant="contained"
-                      fullWidth
-                      startIcon={<Add />}
-                      onClick={handleAddSection}
-                      disabled={addingSection}
-                    >
-                      {addingSection ? "Adding..." : "Add"}
-                    </Button>
-                  </Grid>
-                </Grid>
-
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 420 }}>
-                  <Table stickyHeader size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Section</TableCell>
-                        <TableCell>Block</TableCell>
-                        <TableCell align="right">Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-
-                    <TableBody>
-                      {loadingSections ? (
-                        <TableRow>
-                          <TableCell colSpan={3} align="center" sx={{ py: 6 }}>
-                            <CircularProgress />
-                          </TableCell>
-                        </TableRow>
-                      ) : filteredSections.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={3} align="center" sx={{ py: 6 }}>
-                            No sections found. {courseStored ? "Use the Add button to add one." : "No stored course to load sections."}
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredSections.map((sec) => (
-                          <TableRow key={sec._id ?? `${sec.course}-${sec.section}`} hover>
-                            <TableCell>{sec.section ?? "—"}</TableCell>
-                            <TableCell>{sec.block ?? "—"}</TableCell>
-                            <TableCell align="right">
-                              <IconButton size="small" onClick={() => openEditSectionDialog(sec)} disabled={editSectionSaving}>
-                                <Edit fontSize="small" />
-                              </IconButton>
-
-                              <IconButton
-                                size="small"
-                                onClick={() => handleDeleteSection(sec)}
-                                sx={{ ml: 1 }}
-                                disabled={deletingSectionId === sec._id}
-                              >
-                                <Delete fontSize="small" />
-                              </IconButton>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* Right: Subjects */}
-          <Grid item xs={12} md={6}>
-            <Card sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Subjects
-                </Typography>
-
-                {/* Search bar */}
-                <Box sx={{ mb: 2 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Search subjects by code or name..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    InputProps={{ "aria-label": "search-subjects" }}
-                  />
-                </Box>
-
-                {/* Inputs: Subject Code | Subject Name + Add button */}
-                <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                  <Grid item xs={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Subject Code"
-                      value={subjectCode}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubjectCode(e.target.value)}
-                      placeholder="e.g. IT 101"
-                    />
-                  </Grid>
-
-                  <Grid item xs={6}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Subject Name"
-                      value={subjectName}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSubjectName(e.target.value)}
-                      placeholder="e.g. Introduction to Information Technology"
-                    />
-                  </Grid>
-
-                  <Grid item xs={2}>
-                    <Button variant="contained" fullWidth startIcon={<Add />} onClick={handleAddSubject}>
-                      Add
-                    </Button>
-                  </Grid>
-                </Grid>
-
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 420 }}>
-                  <Table stickyHeader size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Code</TableCell>
-                        <TableCell>Subject</TableCell>
-                        <TableCell align="right">Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-
-                    <TableBody>
-                      {loadingSubjects ? (
-                        <TableRow>
-                          <TableCell colSpan={3} align="center" sx={{ py: 6 }}>
-                            <CircularProgress />
-                          </TableCell>
-                        </TableRow>
-                      ) : filteredSubjects.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={3} align="center" sx={{ py: 6 }}>
-                            No subjects found.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredSubjects.map((s) => (
-                          <TableRow key={s._id ?? s.id} hover>
-                            <TableCell>{s.code}</TableCell>
-                            <TableCell>{s.name}</TableCell>
-                            <TableCell align="right">
-                              <IconButton size="small" onClick={() => openEditDialog(s)}>
-                                <Edit fontSize="small" />
-                              </IconButton>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleDeleteSubject(s)}
-                                sx={{ ml: 1 }}
-                              >
-                                <Delete fontSize="small" />
-                              </IconButton>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-
-        {/* Edit Subject Dialog */}
-        <Dialog open={editDialogOpen} onClose={closeEditDialog} fullWidth maxWidth="sm">
-          <DialogTitle>Edit Subject</DialogTitle>
-          <DialogContent>
-            <TextField
-              margin="dense"
-              label="Subject Code"
-              fullWidth
-              value={editCode}
-              onChange={(e) => setEditCode(e.target.value)}
-            />
-            <TextField
-              margin="dense"
-              label="Subject Name"
-              fullWidth
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={closeEditDialog} disabled={editSaving}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveEdit} variant="contained" disabled={editSaving}>
-              {editSaving ? "Saving..." : "Save"}
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Edit Section Dialog */}
-        <Dialog open={editSectionDialogOpen} onClose={closeEditSectionDialog} fullWidth maxWidth="xs">
-          <DialogTitle>Edit Section</DialogTitle>
-          <DialogContent>
-            <TextField
-              margin="dense"
-              label="Section"
-              fullWidth
-              value={editSectionValue}
-              onChange={(e) => setEditSectionValue(e.target.value)}
-            />
-            <TextField
-              margin="dense"
-              label="Block"
-              fullWidth
-              value={editBlockValue}
-              onChange={(e) => setEditBlockValue(e.target.value)}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={closeEditSectionDialog} disabled={editSectionSaving}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveEditSection} variant="contained" disabled={editSectionSaving}>
-              {editSectionSaving ? "Saving..." : "Save"}
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        <Snackbar
-          open={snack.open}
-          autoHideDuration={3000}
-          onClose={handleCloseSnack}
-          anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      <Box display="flex" flexDirection="column" gap={3}>
+        {/* Header Section */}
+        <Box
+          display="flex"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            p: 3,
+            backgroundColor: "#fff",
+            borderRadius: 3,
+            boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.08)",
+          }}
         >
-          <Alert onClose={handleCloseSnack} severity={snack.severity} sx={{ width: "100%" }}>
-            {snack.message}
-          </Alert>
-        </Snackbar>
-      </Box>
+          <Box>
+            <Typography variant="h4" fontWeight={700} color="#1a1a1a" gutterBottom>
+              Faculty Information {CourseName && `- ${CourseName.toUpperCase()}`}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Manage and view detailed information about faculty members
+              {CourseName && ` under the ${CourseName.toUpperCase()} program`}
+            </Typography>
+          </Box>
+
+          <Box display="flex" alignItems="center" gap={2}>
+            <TextField
+              variant="outlined"
+              placeholder="Search faculty..."
+              size="small"
+              sx={{
+                width: "280px",
+                backgroundColor: "#f8f9fa",
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2,
+                },
+              }}
+              onChange={handleSearch}
+            />
+
+            <IconButton
+              color="primary"
+              onClick={handleOpenModal}
+              sx={{
+                backgroundColor: "primary.main",
+                color: "#fff",
+                "&:hover": {
+                  backgroundColor: "primary.dark",
+                },
+                borderRadius: 2,
+                p: 1.5,
+              }}
+            >
+              <AddIcon />
+            </IconButton>
+          </Box>
+        </Box>
+
+        {/* Table Section */}
+        <TableContainer
+          component={Paper}
+          sx={{
+            width: "100%",
+            borderRadius: 3,
+            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.1)",
+            overflow: "hidden",
+          }}
+        >
+            <Table>
+              <TableHead>
+                <TableRow sx={{ backgroundColor: "#f1f3f4" }}>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Profile
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Full Name
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Email
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }}>
+                    Username
+                  </TableCell>
+                  <TableCell>
+                    <Box
+                      display="flex"
+                      alignItems="center"
+                      sx={{ cursor: "pointer", fontWeight: 700, fontSize: "0.875rem", color: "#333" }}
+                      onClick={handleStatusClick}
+                    >
+                      Status of Account
+                      <IconButton size="small" sx={{ ml: 0.5, p: 0 }}>
+                        <ArrowDropDownIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                    <Menu
+                      anchorEl={statusAnchorEl}
+                      open={statusMenuOpen}
+                      onClose={handleStatusClose}
+                      PaperProps={{
+                        sx: {
+                          borderRadius: 2,
+                          boxShadow: "0px 4px 20px rgba(0,0,0,0.1)",
+                        },
+                      }}
+                    >
+                      <MenuItem onClick={() => handleStatusSelect("all")}>
+                        All
+                      </MenuItem>
+                      <MenuItem onClick={() => handleStatusSelect("active")}>
+                        Active
+                      </MenuItem>
+                      <MenuItem onClick={() => handleStatusSelect("inactive")}>
+                        Inactive
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => handleStatusSelect("forverification")}
+                      >
+                        For Verification
+                      </MenuItem>
+                    </Menu>
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.875rem", color: "#333" }} align="center">
+                    Actions
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {paginatedFacultyList.map((faculty, idx) => (
+                  <TableRow
+                    key={faculty._id}
+                    onClick={() => handleOpenInfoModal(faculty)}
+                    sx={{
+                      backgroundColor:
+                        selectedFaculty === faculty._id
+                          ? "#E3F2FD"
+                          : idx % 2 === 0 ? "#fafafa" : "white",
+                      cursor: "pointer",
+                      transition: "background-color 0.2s ease",
+                      "&:hover": { backgroundColor: "#f0f4ff" },
+                    }}
+                  >
+                    <TableCell>
+                      <Box display="flex" alignItems="center">
+                        <Avatar
+                          src={faculty.profilePhotoUrl || undefined}
+                          sx={{
+                            bgcolor: faculty.profilePhotoUrl
+                              ? "transparent"
+                              : "#90caf9",
+                            width: 32,
+                            height: 32,
+                            mr: 1,
+                          }}
+                        >
+                          {!faculty.profilePhotoUrl &&
+                            faculty.first_name.charAt(0)}
+                        </Avatar>
+                      </Box>
+                    </TableCell>
+
+                    <TableCell>{`${faculty.last_name}, ${faculty.first_name} ${
+                      faculty.middle_name
+                        ? faculty.middle_name.charAt(0) + "."
+                        : ""
+                    }`}</TableCell>
+
+                    <TableCell>{faculty.email}</TableCell>
+                    <TableCell>{faculty.username}</TableCell>
+
+                    <TableCell>
+                      <Chip
+                        label={
+                          faculty.status === "forverification"
+                            ? "For Verification"
+                            : faculty.status.charAt(0).toUpperCase() +
+                              faculty.status.slice(1)
+                        }
+                        color={
+                          faculty.status === "active"
+                            ? "success"
+                            : faculty.status === "inactive"
+                            ? "default"
+                            : "warning"
+                        }
+                        size="small"
+                        variant="outlined"
+                      />
+                    </TableCell>
+
+                    {/* MoreHoriz Menu Icon */}
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <IconButton
+                        color="primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAnchorEl(e.currentTarget);
+                          setSelectedFacultyInfo(faculty);
+                        }}
+                      >
+                        <MoreHorizIcon />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+              <Menu
+                anchorEl={anchorEl}
+                open={Boolean(anchorEl)}
+                onClose={() => setAnchorEl(null)}
+                PaperProps={{
+                  sx: {
+                    borderRadius: 2,
+                    boxShadow: "0px 4px 20px rgba(0,0,0,0.1)",
+                    minWidth: 160,
+                  },
+                }}
+              >
+                <MenuItem
+                  onClick={() => {
+                    console.log("Block:", selectedFacultyInfo);
+                    setAnchorEl(null);
+                  }}
+                  sx={{
+                    color: "#ed6c02",
+                    fontWeight: 500,
+                    "&:hover": {
+                      backgroundColor: "#fff3e0",
+                    },
+                  }}
+                >
+                  <BlockIcon
+                    fontSize="small"
+                    sx={{ mr: 1, color: "#ed6c02" }}
+                  />
+                  Block
+                </MenuItem>
+
+                <MenuItem
+                  onClick={() => {
+                    if (selectedFacultyInfo) {
+                      handleDeleteAccount(selectedFacultyInfo._id);
+                    }
+                    setAnchorEl(null);
+                  }}
+                  sx={{
+                    color: "#d32f2f", // error red
+                    fontWeight: 500,
+                    "&:hover": {
+                      backgroundColor: "#ffebee", // light red
+                    },
+                  }}
+                >
+                  <DeleteIcon
+                    fontSize="small"
+                    sx={{ mr: 1, color: "#d32f2f" }}
+                  />
+                  Delete
+                </MenuItem>
+              </Menu>
+            </Table>
+            {/* Table Pagination */}
+            <TablePagination
+              component="div"
+              count={filteredFacultyList.length}
+              page={page}
+              onPageChange={handleChangePage}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+              rowsPerPageOptions={[5, 10, 25, 50]}
+              sx={{
+                borderTop: "1px solid #e0e0e0",
+                backgroundColor: "#fafafa",
+              }}
+            />
+            <InfoModal
+              open={openInfoModal}
+              onClose={handleCloseInfoModal}
+              faculty={selectedFacultyInfo}
+            />
+          </TableContainer>
+        </Box>
+
+      <AddFacultyModal
+        open={openModal}
+        onClose={handleCloseModal}
+        onAdd={handleAddAccount}
+        newFaculty={newFaculty}
+        setNewFaculty={setNewFaculty}
+        handleInputChange={handleInputChange}
+        handleRoleChange={handleRoleChange}
+        showPassword={showPassword}
+        togglePasswordVisibility={togglePasswordVisibility}
+      />
     </AdminMain>
   );
 };
 
-export default CourseBlockManagement;
+export default FacultyInfo;

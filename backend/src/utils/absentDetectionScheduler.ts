@@ -35,7 +35,15 @@ export async function markAbsentForDay(date?: string): Promise<void> {
       date: targetDate
     });
     const loggedScheduleIds = new Set(
-      existingLogs.map(log => log.schedule.toString())
+      existingLogs
+        .filter(log => log.schedule !== null && log.schedule !== undefined)
+        .map(log => {
+          const schedule = log.schedule!; // Non-null assertion since we filtered above
+          const scheduleId = typeof schedule === 'string' 
+            ? schedule 
+            : (schedule as any)?._id?.toString() || schedule.toString();
+          return scheduleId;
+        })
     );
 
     let absentCount = 0;

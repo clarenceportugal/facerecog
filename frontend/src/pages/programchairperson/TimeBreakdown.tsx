@@ -83,10 +83,26 @@ const TimeBreakdown: React.FC = React.memo(() => {
   const formatLogs = (data: any[]): TimeLog[] => {
     return data
         .filter((log: any) => {
-          // Filter out logs with null/undefined schedules to avoid "Unknown" entries
-          return log.schedule !== null && log.schedule !== undefined;
+          // Include logs with schedules OR no-schedule logs
+          return (log.schedule !== null && log.schedule !== undefined) || log.isNoSchedule === true;
         })
       .map((log: any) => {
+          // Handle no-schedule logs
+          if (log.isNoSchedule === true) {
+            return {
+            _id: log._id,
+            date: log.date,
+              instructorName: log.instructorName || 'Unknown',
+              courseCode: 'No Schedule',
+              courseTitle: 'No Schedule',
+            timeIn: log.timeIn,
+            timeOut: log.timeout,
+              room: log.room || 'Lab 1',
+              status: log.status || 'no schedule',
+              remarks: log.remarks || '',
+            };
+          }
+          
           // Get instructor name from schedule
           let instructorName = 'Unknown';
           if (log.schedule?.instructor) {
@@ -555,6 +571,7 @@ const TimeBreakdown: React.FC = React.memo(() => {
                             else if (status === "excuse") chipColor = "info";
                             else if (status === "left early") chipColor = "secondary";
                             else if (status === "returned") chipColor = "info";
+                            else if (status === "no schedule") chipColor = "warning";
 
                             return (
                               <Chip

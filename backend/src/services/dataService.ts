@@ -368,7 +368,7 @@ export interface ScheduleData {
   endTime: string;
   semesterStartDate: string;
   semesterEndDate: string;
-  section: string;
+  section: string | { course: string; section: string; block: string };
   days: {
     mon: boolean;
     tue: boolean;
@@ -501,6 +501,26 @@ export const ScheduleService = {
   async create(data: Omit<ScheduleData, '_id' | 'id'>): Promise<ScheduleData> {
     if (isOfflineMode()) {
       const instructorId = typeof data.instructor === 'string' ? data.instructor : (data.instructor as any)._id;
+      // Extract section ID - section should be a string ID when creating
+      let sectionId: string;
+      if (typeof data.section === 'string') {
+        sectionId = data.section;
+      } else if (data.section && typeof data.section === 'object' && 'course' in data.section && 'section' in data.section && 'block' in data.section) {
+        // If section is an object, try to find the section by its properties
+        const sectionObj = data.section as { course: string; section: string; block: string };
+        const allSections = offlineDb.getAllSections();
+        const foundSection = allSections.find(s => 
+          s.course === sectionObj.course && 
+          s.section === sectionObj.section && 
+          s.block === sectionObj.block
+        );
+        if (!foundSection) {
+          throw new Error(`Section not found: ${sectionObj.course} - ${sectionObj.section}${sectionObj.block}`);
+        }
+        sectionId = foundSection.id;
+      } else {
+        throw new Error('Section must be provided as a string ID or object with course, section, and block properties');
+      }
       const schedule = offlineDb.createSchedule({
         course_title: data.courseTitle,
         course_code: data.courseCode,
@@ -510,13 +530,30 @@ export const ScheduleService = {
         end_time: data.endTime,
         semester_start_date: data.semesterStartDate,
         semester_end_date: data.semesterEndDate,
-        section_id: data.section,
+        section_id: sectionId,
         days: JSON.stringify(data.days)
       });
       const instructor = offlineDb.getUserById(schedule.instructor_id);
       return mapOfflineScheduleToScheduleData(schedule, instructor);
     }
-    const schedule = new Schedule(data);
+    // For MongoDB, section should be a string ID (ObjectId), not an object
+    const scheduleData: any = { ...data };
+    if (typeof data.section === 'object' && data.section !== null && 'course' in data.section && 'section' in data.section && 'block' in data.section) {
+      // If section is an object, we need to find the section ID
+      // This shouldn't happen in normal flow, but handle it gracefully
+      const sectionObj = data.section as { course: string; section: string; block: string };
+      const Section = (await import('../models/Section')).default;
+      const foundSection = await Section.findOne({
+        course: sectionObj.course,
+        section: sectionObj.section,
+        block: sectionObj.block
+      });
+      if (!foundSection) {
+        throw new Error(`Section not found: ${sectionObj.course} - ${sectionObj.section}${sectionObj.block}`);
+      }
+      scheduleData.section = foundSection._id.toString();
+    }
+    const schedule = new Schedule(scheduleData);
     await schedule.save();
     const populated = await Schedule.findById(schedule._id).populate('instructor').populate('section');
     return mongoScheduleToScheduleData(populated!);
@@ -571,7 +608,7 @@ export const ScheduleService = {
 export interface LogData {
   _id?: string;
   id?: string;
-  schedule: string | ScheduleData;
+  schedule: string | ScheduleData | null;
   date: string;
   status: string;
   timeIn?: string;
@@ -579,6 +616,9 @@ export interface LogData {
   remarks?: string;
   college?: string;
   course: string;
+  instructorName?: string; // For no-schedule logs
+  room?: string; // For no-schedule logs
+  isNoSchedule?: boolean; // Flag to identify no-schedule logs
 }
 
 export const LogService = {
@@ -649,26 +689,39 @@ export const LogService = {
 
   async create(data: Omit<LogData, '_id' | 'id'>): Promise<LogData> {
     if (isOfflineMode()) {
-      const scheduleId = typeof data.schedule === 'string' ? data.schedule : (data.schedule as any)._id;
+      const scheduleId = data.schedule 
+        ? (typeof data.schedule === 'string' ? data.schedule : (data.schedule as any)._id)
+        : null;
       const log = offlineDb.createLog({
-        schedule_id: scheduleId,
+        schedule_id: scheduleId || 'no-schedule',
         date: data.date,
         status: data.status,
         time_in: data.timeIn,
         time_out: data.timeout,
         remarks: data.remarks,
         college_id: data.college,
-        course: data.course
-      });
+        course: data.course,
+        instructor_name: data.instructorName, // For no-schedule logs
+        room: data.room // For no-schedule logs
+      } as any);
       return mapOfflineLogToLogData(log);
     }
-    const log = new Log(data);
+    // For MongoDB, create log with optional schedule
+    const logData: any = {
+      ...data,
+      schedule: data.schedule || null
+    };
+    const log = new Log(logData);
     await log.save();
+    // Only populate if schedule exists
+    if (data.schedule) {
     const populated = await Log.findById(log._id).populate({
       path: 'schedule',
       populate: { path: 'instructor' }
     });
     return mongoLogToLogData(populated!);
+    }
+    return mongoLogToLogData(log);
   },
 
   async update(id: string, updates: Partial<LogData>): Promise<boolean> {
@@ -964,6 +1017,19 @@ function mongoUserToUserData(user: any): UserData {
 }
 
 function mapOfflineScheduleToScheduleData(schedule: offlineDb.OfflineSchedule, instructor: offlineDb.OfflineUser | null): ScheduleData {
+  // Fetch section data if available
+  let sectionData: string | { course: string; section: string; block: string } = schedule.section_id;
+  if (schedule.section_id) {
+    const section = offlineDb.getSectionById(schedule.section_id);
+    if (section) {
+      sectionData = {
+        course: section.course || '',
+        section: section.section || '',
+        block: section.block || ''
+      };
+    }
+  }
+  
   return {
     _id: schedule.id,
     id: schedule.id,
@@ -975,12 +1041,23 @@ function mapOfflineScheduleToScheduleData(schedule: offlineDb.OfflineSchedule, i
     endTime: schedule.end_time,
     semesterStartDate: schedule.semester_start_date,
     semesterEndDate: schedule.semester_end_date,
-    section: schedule.section_id,
+    section: sectionData,
     days: JSON.parse(schedule.days)
   };
 }
 
 function mongoScheduleToScheduleData(schedule: any): ScheduleData {
+  // Handle section - if populated, preserve the object structure; otherwise use ID
+  let sectionData: string | ScheduleData['section'] = schedule.section?.toString() || null;
+  if (schedule.section && typeof schedule.section === 'object' && schedule.section._id) {
+    // Section is populated - preserve the object structure
+    sectionData = {
+      course: schedule.section.course || '',
+      section: schedule.section.section || '',
+      block: schedule.section.block || ''
+    };
+  }
+  
   return {
     _id: schedule._id.toString(),
     id: schedule._id.toString(),
@@ -992,23 +1069,31 @@ function mongoScheduleToScheduleData(schedule: any): ScheduleData {
     endTime: schedule.endTime,
     semesterStartDate: schedule.semesterStartDate,
     semesterEndDate: schedule.semesterEndDate,
-    section: schedule.section?._id?.toString() || schedule.section?.toString(),
+    section: sectionData,
     days: schedule.days
   };
 }
 
 function mapOfflineLogToLogData(log: offlineDb.OfflineLog): LogData {
+  // Check if this is a no-schedule log (schedule_id is 'no-schedule' or null)
+  const isNoSchedule = log.schedule_id === 'no-schedule' || log.schedule_id === null || !log.schedule_id;
+  
   return {
     _id: log.id,
     id: log.id,
-    schedule: log.schedule_id,
+    schedule: isNoSchedule ? null : log.schedule_id,
     date: log.date,
     status: log.status,
     timeIn: log.time_in,
     timeout: log.time_out,
     remarks: log.remarks,
     college: log.college_id,
-    course: log.course
+    course: log.course,
+    // For offline, we need to check if we can get instructorName and room from the log
+    // These might not be stored in offline DB, so we'll need to add them
+    instructorName: (log as any).instructor_name,
+    room: (log as any).room,
+    isNoSchedule: isNoSchedule
   };
 }
 
@@ -1016,13 +1101,16 @@ function mongoLogToLogData(log: any): LogData {
   return {
     _id: log._id.toString(),
     id: log._id.toString(),
-    schedule: log.schedule ? mongoScheduleToScheduleData(log.schedule) : log.schedule?.toString(),
+    schedule: log.schedule ? mongoScheduleToScheduleData(log.schedule) : (log.schedule?.toString() || null),
     date: log.date,
     status: log.status,
     timeIn: log.timeIn,
     timeout: log.timeout,
     remarks: log.remarks,
     college: log.college?.toString(),
+    instructorName: log.instructorName, // For no-schedule logs
+    room: log.room, // For no-schedule logs
+    isNoSchedule: log.isNoSchedule || false, // Flag to identify no-schedule logs
     course: log.course
   };
 }

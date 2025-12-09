@@ -128,11 +128,29 @@ export function initOfflineDatabase(): Database.Database {
       remarks TEXT,
       college_id TEXT,
       course TEXT NOT NULL,
+      instructor_name TEXT,
+      room TEXT,
       synced INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (schedule_id) REFERENCES schedules(id)
     )
   `);
+  
+  // Migration: Add new columns if they don't exist (for existing databases)
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(attendance_logs)").all() as any[];
+    const hasInstructorName = tableInfo.some(col => col.name === 'instructor_name');
+    const hasRoom = tableInfo.some(col => col.name === 'room');
+    
+    if (!hasInstructorName) {
+      db.exec('ALTER TABLE attendance_logs ADD COLUMN instructor_name TEXT');
+    }
+    if (!hasRoom) {
+      db.exec('ALTER TABLE attendance_logs ADD COLUMN room TEXT');
+    }
+  } catch (e) {
+    // Ignore errors - table might not exist yet
+  }
   
   // Create Semesters table (or migrate old schema)
   // Check if semesters table exists with old unique constraint and needs migration
@@ -726,17 +744,37 @@ export interface OfflineLog {
   college_id?: string;
   course: string;
   synced: number;
+  instructor_name?: string; // For no-schedule logs
+  room?: string; // For no-schedule logs
 }
 
 export function createLog(log: Omit<OfflineLog, 'id' | 'synced'>): OfflineLog {
   const db = getDb();
   const id = generateId();
+  
+  // Check if columns exist, if not add them (migration)
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(attendance_logs)").all() as any[];
+    const hasInstructorName = tableInfo.some(col => col.name === 'instructor_name');
+    const hasRoom = tableInfo.some(col => col.name === 'room');
+    
+    if (!hasInstructorName) {
+      db.exec('ALTER TABLE attendance_logs ADD COLUMN instructor_name TEXT');
+    }
+    if (!hasRoom) {
+      db.exec('ALTER TABLE attendance_logs ADD COLUMN room TEXT');
+    }
+  } catch (e) {
+    // Table might not exist yet, will be created with new schema
+  }
+  
   const stmt = db.prepare(`
-    INSERT INTO attendance_logs (id, schedule_id, date, status, time_in, time_out, remarks, college_id, course, synced)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    INSERT INTO attendance_logs (id, schedule_id, date, status, time_in, time_out, remarks, college_id, course, instructor_name, room, synced)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
   `);
   stmt.run(id, log.schedule_id, log.date, log.status, log.time_in || null, 
-    log.time_out || null, log.remarks || '', log.college_id || null, log.course);
+    log.time_out || null, log.remarks || '', log.college_id || null, log.course,
+    log.instructor_name || null, log.room || null);
   return { id, ...log, synced: 0 };
 }
 
@@ -820,7 +858,9 @@ function mapRowToLog(row: any): OfflineLog {
     remarks: row.remarks,
     college_id: row.college_id,
     course: row.course,
-    synced: row.synced
+    synced: row.synced || 0,
+    instructor_name: row.instructor_name, // For no-schedule logs
+    room: row.room // For no-schedule logs
   };
 }
 

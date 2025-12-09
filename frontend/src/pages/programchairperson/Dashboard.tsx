@@ -44,7 +44,7 @@ interface Schedule {
     course: string;
     section: string;
     block: string;
-  };
+  } | string | null;
   days: {
     mon: boolean;
     tue: boolean;
@@ -547,8 +547,10 @@ const Dashboard: React.FC = () => {
                             <TableCell sx={{ py: 1.5 }}>{schedule.endTime}</TableCell>
                             <TableCell sx={{ py: 1.5 }}>{schedule.room}</TableCell>
                             <TableCell sx={{ py: 1.5 }}>
-                              {schedule.section
-                                ? `${schedule.section.course} - ${schedule.section.section}${schedule.section.block}`
+                              {schedule.section && typeof schedule.section === 'object'
+                                ? `${schedule.section.course} - ${schedule.section.section}${schedule.section.block || ''}`
+                                : schedule.section && typeof schedule.section === 'string'
+                                ? schedule.section
                                 : "N/A"}
                             </TableCell>
                             <TableCell sx={{ py: 1.5 }}>

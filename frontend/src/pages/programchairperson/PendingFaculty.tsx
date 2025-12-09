@@ -38,7 +38,7 @@ const PendingFaculty: React.FC = () => {
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+  // Removed unused hoveredBtn state
 
   const [facultyList, setFacultyList] = useState<Faculty[]>([]);
   const [loading, setLoading] = useState(true);

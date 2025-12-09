@@ -77,7 +77,8 @@ const LiveVideo: React.FC = () => {
   const [detectionLogs, setDetectionLogs] = useState<DetectionLog[]>([]);
   const [currentCameraName, setCurrentCameraName] = useState<string>("Camera 1");
 
-  const ABSENCE_TIMEOUT_SECONDS = 300;
+  const ABSENCE_TIMEOUT_SECONDS = 300; // 5 minutes for regular users
+  const NO_SCHEDULE_AUTO_TIMEOUT_SECONDS = 2 * 60; // 2 minutes for no-schedule users
   const DETECTION_LOG_INTERVAL_MS = 120000;
   const MAX_DETECTION_LOGS = 500; // ⚡ MEMORY OPTIMIZATION: Limit logs to prevent memory issues
 
@@ -256,8 +257,16 @@ const LiveVideo: React.FC = () => {
                 if (!hasSchedule) {
                   let session = noScheduleSessionsRef.current.get(name);
                   
+                  // If session exists but already timed out, create a new session (new entry)
+                  if (session && session.timeOutLogged) {
+                    console.log(`🔄 [NO SCHEDULE] ${name} returned after timeout - creating NEW session`);
+                    // Remove old session to create a new one
+                    noScheduleSessionsRef.current.delete(name);
+                    session = undefined; // Reset to create new session
+                  }
+                  
                   if (!session) {
-                    // First time detected - create session and log TIME IN
+                    // First time detected OR returned after timeout - create NEW session and log TIME IN
                     session = {
                       name: name,
                       firstSeen: now,
@@ -270,7 +279,7 @@ const LiveVideo: React.FC = () => {
                     };
                     noScheduleSessionsRef.current.set(name, session);
                 
-                    // Log TIME IN for person without schedule
+                    // Log TIME IN for person without schedule (new entry)
                     noScheduleLogs.push({
                       id: `time-in-no-sched-${now}-${Math.random()}`,
                       name: name,
@@ -284,15 +293,27 @@ const LiveVideo: React.FC = () => {
                     });
                     
                     session.timeInLogged = true;
-                    console.log(`⏰ [NO SCHEDULE] TIME IN logged for ${name}`);
+                    console.log(`⏰ [NO SCHEDULE] TIME IN logged for ${name} (new session)`);
+                    
+                    // Call backend API to log time in for no-schedule user
+                    fetch('http://localhost:5000/api/auth/log-time-in-no-schedule', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        instructorName: name,
+                        cameraId: selectedCamera,
+                        timestamp: new Date(now).toISOString()
+                      })
+                    }).catch(err => console.error('[NO SCHEDULE] Error logging time in:', err));
                 } else {
-                    // Update existing session
+                    // Update existing session - they are currently detected (not timed out yet)
                     if (session.isPresent) {
                       // Update total time while present
                       const timeDiff = (now - session.lastSeen) / 1000; // Convert to seconds
                       session.totalTimeSeconds += timeDiff;
+                      session.lastSeen = now; // Update last seen time since they're currently detected
                     } else {
-                      // They returned - mark as present again
+                      // They returned before timeout - mark as present again (not a new entry)
                       session.isPresent = true;
                       const absenceMinutes = session.leftAt 
                         ? Math.round((now - session.leftAt) / 60000) 
@@ -312,19 +333,20 @@ const LiveVideo: React.FC = () => {
 
                       // Reset leftAt since they've returned
                       session.leftAt = null;
-                      console.log(`👋 [NO SCHEDULE] ${name} RETURNED after ${absenceMinutes} min`);
+                      session.lastSeen = now; // Update last seen time
+                      console.log(`👋 [NO SCHEDULE] ${name} RETURNED after ${absenceMinutes} min (same session)`);
                     }
-                    session.lastSeen = now;
                   }
                 }
               });
               
-              // Check for people without schedules who have left (not detected for 5 minutes)
+              // Check for people without schedules who have left (not detected for 2 minutes)
               noScheduleSessionsRef.current.forEach((session, name) => {
                 if (session.isPresent && !currentNames.has(name)) {
                   const timeSinceLastSeen = (now - session.lastSeen) / 1000; // Convert to seconds
                   
-                  if (timeSinceLastSeen >= ABSENCE_TIMEOUT_SECONDS) {
+                  // Use 2 minute timeout for no-schedule users (2 minutes = 120 seconds)
+                  if (timeSinceLastSeen >= NO_SCHEDULE_AUTO_TIMEOUT_SECONDS) {
                     // Update total time before marking as left (add time from lastSeen to now)
                     session.totalTimeSeconds += timeSinceLastSeen;
                     
@@ -349,6 +371,17 @@ const LiveVideo: React.FC = () => {
                       
                       session.timeOutLogged = true;
                       console.log(`🚪 [NO SCHEDULE] TIME OUT logged for ${name} - Total: ${totalMinutes} min`);
+                      
+                      // Call backend API to log time out for no-schedule user
+                      fetch('http://localhost:5000/api/auth/log-time-out-no-schedule', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          instructorName: name,
+                          timestamp: new Date(now).toISOString(),
+                          totalMinutes: totalMinutes
+                        })
+                      }).catch(err => console.error('[NO SCHEDULE] Error logging time out:', err));
                 }
                   } else {
                     // Still within absence timeout - update total time while they're still considered present
@@ -481,6 +514,72 @@ const LiveVideo: React.FC = () => {
       noScheduleSessionsRef.current.clear();
     };
   }, [selectedCamera, currentCameraName]);
+
+  // ⚡ PERIODIC TIMEOUT CHECK: Check for no-schedule users who should be timed out
+  useEffect(() => {
+    const checkTimeoutInterval = setInterval(() => {
+      const now = Date.now();
+      const noScheduleLogs: DetectionLog[] = [];
+      
+      // Check all no-schedule sessions for timeout
+      noScheduleSessionsRef.current.forEach((session, name) => {
+        if (session.isPresent && session.timeInLogged && !session.timeOutLogged) {
+          const timeSinceLastSeen = (now - session.lastSeen) / 1000; // Convert to seconds
+          
+          // Check if timeout period has passed (2 minutes)
+          if (timeSinceLastSeen >= NO_SCHEDULE_AUTO_TIMEOUT_SECONDS) {
+            // Update total time before marking as left
+            session.totalTimeSeconds += timeSinceLastSeen;
+            
+            // Mark as left and log TIME OUT
+            session.isPresent = false;
+            session.leftAt = now;
+            
+            const totalMinutes = Math.round(session.totalTimeSeconds / 60);
+            
+            noScheduleLogs.push({
+              id: `time-out-no-sched-${now}-${Math.random()}`,
+              name: name,
+              timestamp: new Date(now),
+              cameraName: currentCameraName,
+              type: 'time_out_no_schedule',
+              details: `🚪 TIME OUT (No Schedule) - Total: ${totalMinutes} min`,
+              totalMinutes: totalMinutes,
+              has_schedule: false,
+              is_valid_schedule: false,
+            });
+            
+            session.timeOutLogged = true;
+            console.log(`🚪 [NO SCHEDULE] AUTO TIMEOUT for ${name} - Total: ${totalMinutes} min (not detected for ${Math.round(timeSinceLastSeen / 60)} min)`);
+            
+            // Call backend API to log time out for no-schedule user
+            fetch('http://localhost:5000/api/auth/log-time-out-no-schedule', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                instructorName: name,
+                timestamp: new Date(now).toISOString(),
+                totalMinutes: totalMinutes
+              })
+            }).catch(err => console.error('[NO SCHEDULE] Error logging time out:', err));
+          }
+        }
+      });
+      
+      // Add timeout logs if any
+      if (noScheduleLogs.length > 0) {
+        setDetectionLogs(prev => {
+          const combined = [...prev, ...noScheduleLogs];
+          if (combined.length > MAX_DETECTION_LOGS) {
+            return combined.slice(-MAX_DETECTION_LOGS);
+          }
+          return combined;
+        });
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(checkTimeoutInterval);
+  }, [currentCameraName]);
 
   // ⚡ MEMORY OPTIMIZATION: Periodic cleanup of old logs
   useEffect(() => {

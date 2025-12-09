@@ -121,45 +121,45 @@ const DeanMain: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             const isActive = activePage === resolvedPath;
 
             return (
-              <React.Fragment key={item.text}>
-                {item.text === `${CollegeName} Staff Info` && (
-                  <>
-                    <Typography
-                      variant="subtitle2"
-                      sx={{
+            <React.Fragment key={item.text}>
+              {item.text === `${CollegeName} Staff Info` && (
+                <>
+                  <Typography
+                    variant="subtitle2"
+                    sx={{
                         color: "#F8E5EE",
-                        textTransform: "uppercase",
-                        fontWeight: "bold",
-                        ml: 3,
-                        mt: 2,
-                        mb: 1,
-                        opacity: 0.7,
-                      }}
-                    >
-                      Faculty
-                    </Typography>
+                      textTransform: "uppercase",
+                      fontWeight: "bold",
+                      ml: 3,
+                      mt: 2,
+                      mb: 1,
+                      opacity: 0.7,
+                    }}
+                  >
+                    Faculty
+                  </Typography>
                     <Divider sx={{ backgroundColor: "#4F1A0F", mx: 2, mb: 1 }} />
-                  </>
-                )}
+                </>
+              )}
 
-                <ListItemButton
+              <ListItemButton
                   onClick={() => handleNavigate(resolvedPath)}
-                  sx={{
+                sx={{
                     color: "#F8E5EE",
                     backgroundColor: isActive ? "#7B0D1E" : "transparent",
-                    borderRadius: "10px",
-                    mx: 2,
-                    my: 1,
+                  borderRadius: "10px",
+                  mx: 2,
+                  my: 1,
                     borderRight: isActive ? "5px solid #F8E5EE" : "5px solid transparent",
                     "&:hover": {
                       backgroundColor: "#9F2042",
                     },
-                  }}
-                >
+                }}
+              >
                   <ListItemIcon sx={{ color: "#F8E5EE" }}>{item.icon}</ListItemIcon>
-                  <ListItemText primary={item.text} />
-                </ListItemButton>
-              </React.Fragment>
+                <ListItemText primary={item.text} />
+              </ListItemButton>
+            </React.Fragment>
             );
           })}
         </List>

@@ -479,7 +479,9 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
         date: targetDate
       });
       const loggedScheduleIds = new Set(
-        existingLogs.map(log => log.schedule.toString())
+        existingLogs
+          .filter(log => log.schedule !== null && log.schedule !== undefined)
+          .map(log => log.schedule!.toString())
       );
 
       let absentCount = 0;
@@ -706,6 +708,111 @@ router.get("/faculty-schedules/:facultyId", async (req: Request, res: Response):
       res.json({ success: true, timeLog: { ...timeLog, timeout: timeOutDate.toTimeString().slice(0, 8), remarks }, mode: isOfflineMode() ? 'offline' : 'online' });
     } catch (error: any) {
       console.error('[API] Error logging time out:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // LOG TIME IN FOR NO-SCHEDULE USER (called by frontend LiveVideo) - WORKS OFFLINE
+  router.post("/log-time-in-no-schedule", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { 
+        instructorName, 
+        cameraId, 
+        timestamp
+      } = req.body;
+      
+      console.log(`[API] Logging TIME IN (No Schedule) for: ${instructorName} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      
+      // Map camera ID to room name (match the format used in schedules: "Lab 1", "Lab 2", etc.)
+      const roomMap: Record<string, string> = {
+        'camera1': 'Lab 1',
+        'camera2': 'Lab 2',
+        'camera3': 'Lab 3'
+      };
+      const room = roomMap[cameraId || 'camera1'] || 'Lab 1';
+      
+      // Check if already logged in today for this user (no schedule)
+      const today = new Date(timestamp);
+      const todayStr = today.toISOString().slice(0, 10);
+      
+      // Find existing no-schedule log for today
+      const allLogs = await LogService.findAll();
+      const existingLog = allLogs.find(log => {
+        const logDate = new Date(log.date).toISOString().slice(0, 10);
+        return logDate === todayStr && 
+               (log as any).isNoSchedule === true && 
+               (log as any).instructorName === instructorName &&
+               !log.timeout &&
+               (log.schedule === null || !log.schedule);
+      });
+
+      if (existingLog) {
+        console.log('[API] ℹ️ Already logged in today (no schedule)');
+        res.json({ message: 'Already logged in today', timeLog: existingLog });
+        return;
+      }
+
+      // Create no-schedule log
+      const timeLog = await LogService.create({
+        date: todayStr,
+        schedule: null as any, // No schedule
+        timeIn: new Date(timestamp).toTimeString().slice(0, 8), // HH:MM:SS
+        status: 'no schedule',
+        remarks: 'No scheduled class',
+        course: 'No Schedule',
+        instructorName: instructorName,
+        room: room,
+        isNoSchedule: true
+      } as any);
+      
+      console.log(`[API] ✅ TIME IN (No Schedule) logged successfully for ${instructorName} in ${room} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      
+      res.json({ success: true, timeLog, mode: isOfflineMode() ? 'offline' : 'online' });
+    } catch (error: any) {
+      console.error('[API] Error logging time in (no schedule):', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // LOG TIME OUT FOR NO-SCHEDULE USER (called by frontend LiveVideo) - WORKS OFFLINE
+  router.post("/log-time-out-no-schedule", async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { instructorName, timestamp, totalMinutes } = req.body;
+      console.log(`[API] Logging TIME OUT (No Schedule) for: ${instructorName} [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+
+      // Find today's no-schedule time log
+      const today = new Date(timestamp);
+      const todayStr = today.toISOString().slice(0, 10);
+
+      const allLogs = await LogService.findAll();
+      const timeLog = allLogs.find(log => {
+        const logDate = new Date(log.date).toISOString().slice(0, 10);
+        return logDate === todayStr && 
+               (log as any).isNoSchedule === true && 
+               (log as any).instructorName === instructorName &&
+               log.timeIn && !log.timeout;
+      });
+
+      if (!timeLog) {
+        console.log('[API] ❌ Time in log not found (no schedule)');
+        res.status(404).json({ message: 'Time in log not found' });
+        return;
+      }
+
+      // Update time out
+      const timeOutDate = new Date(timestamp);
+      const remarks = `No scheduled class - Total: ${totalMinutes} min`;
+      
+      // Update log using data service
+      await LogService.update(timeLog._id || timeLog.id || '', {
+        timeout: timeOutDate.toTimeString().slice(0, 8),
+        remarks: remarks
+      });
+
+      console.log(`[API] ✅ TIME OUT (No Schedule) logged successfully - Total: ${totalMinutes} min [${isOfflineMode() ? 'OFFLINE' : 'ONLINE'}]`);
+      res.json({ success: true, timeLog: { ...timeLog, timeout: timeOutDate.toTimeString().slice(0, 8), remarks }, mode: isOfflineMode() ? 'offline' : 'online' });
+    } catch (error: any) {
+      console.error('[API] Error logging time out (no schedule):', error);
       res.status(500).json({ error: error.message });
     }
   });

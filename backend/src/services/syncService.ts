@@ -252,6 +252,16 @@ export async function syncAllDataToOffline(): Promise<SyncResult> {
     const logs = await Log.find() as any[];
     for (const log of logs) {
       try {
+        // Skip no-schedule logs (they have null schedules and are handled differently)
+        if (!log.schedule || log.schedule === null || log.schedule === undefined) {
+          continue;
+        }
+        
+        const schedule = log.schedule!; // Non-null assertion since we checked above
+        const scheduleId = typeof schedule === 'string' 
+          ? schedule 
+          : (schedule as any)?._id?.toString() || schedule.toString();
+        
         const stmt = db.prepare(`
           INSERT OR REPLACE INTO attendance_logs (
             id, schedule_id, date, status, time_in, time_out, remarks,
@@ -260,7 +270,7 @@ export async function syncAllDataToOffline(): Promise<SyncResult> {
         `);
         stmt.run(
           log._id.toString(),
-          log.schedule.toString(),
+          scheduleId,
           log.date,
           log.status,
           log.timeIn || null,
