@@ -85,7 +85,7 @@ const CourseBlockManagement: React.FC = () => {
   // stored course read from localStorage (display-only)
   const [courseStored, setCourseStored] = useState<string | null>(null);
   // stored college id read from localStorage (ObjectId string) - we'll set it to fixed id on mount
-  const [collegeStored, setCollegeStored] = useState<string | null>(null);
+  const [, setCollegeStored] = useState<string | null>(null);
 
   // search input for filtering sections (one-line search bar)
   const [sectionsSearch, setSectionsSearch] = useState<string>("");
@@ -142,10 +142,10 @@ const CourseBlockManagement: React.FC = () => {
   const normalizeTitle = (t: string) => String(t ?? "").trim();
 
   // Helper: derive a short course prefix from a subject code (used for display)
-  const getCourseNameFromCode = (code: string) => {
-    const match = String(code).trim().toUpperCase().match(/^([A-Z]{1,4})/);
-    return match ? match[1] : "—";
-  };
+  // const getCourseNameFromCode = (code: string) => {
+  //   const match = String(code).trim().toUpperCase().match(/^([A-Z]{1,4})/);
+  //   return match ? match[1] : "—";
+  // };
 
   // Try to read course from a few common localStorage keys
   const readCourseFromLocalStorage = (): string | null => {
@@ -254,7 +254,7 @@ const CourseBlockManagement: React.FC = () => {
   // On mount: read stored course and set fixed college id and fetch sections automatically
   useEffect(() => {
     const storedCourse = readCourseFromLocalStorage();
-    const storedCollege = readCollegeFromLocalStorage();
+    readCollegeFromLocalStorage(); // Read but not used
 
     // set college to fixed id unconditionally (but keep storedCollege for compatibility)
     setCollegeStored(FIXED_COLLEGE_ID);
