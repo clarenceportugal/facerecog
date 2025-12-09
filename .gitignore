@@ -1,6 +1,18 @@
-# Large model files
+# Large model files - Detection and Recognition Models
 retinaface/
 retinaface-R50/
+*.params
+*.pkl
+*.onnx
+*.pth
+*.h5
+*.pb
+*.weights
+*.model
+*_model/
+*_models/
+models/
+weights/
 
 streaming-server/faces/
 
