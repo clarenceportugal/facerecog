@@ -32,7 +32,55 @@ if (isOfflineMode()) {
 
 const app = express();
 
-app.use(cors());
+// ---------------------- PATCHED CORS + PNA SUPPORT ----------------------
+// Allowed origins (add more if needed)
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_ORIGIN || 'https://eduvision-two.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5000'
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // allow server-to-server requests
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error('CORS origin not allowed'), false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  })
+);
+
+// Middleware to echo CORS headers and handle PNA preflight
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const origin = req.header('Origin') ?? '';
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (req.header('Access-Control-Request-Private-Network') === 'true') {
+      res.header('Access-Control-Allow-Private-Network', 'true');
+    }
+  }
+  next();
+});
+
+// Respond to OPTIONS preflight requests
+app.options('*', (req: express.Request, res: express.Response) => {
+  const origin = req.header('Origin') ?? (ALLOWED_ORIGINS[0] || '*');
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.header('Access-Control-Request-Private-Network') === 'true') {
+    res.header('Access-Control-Allow-Private-Network', 'true');
+  }
+  return res.sendStatus(204);
+});
+// -----------------------------------------------------------------------
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -68,31 +116,27 @@ app.get('/api/system/sync-status', (req, res) => {
   });
 });
 
-// Sync MongoDB to SQLite (run when online to prepare for offline)
-app.post('/api/system/sync-to-offline', async (req: express.Request, res: express.Response): Promise<void> => {
+// Sync MongoDB to SQLite
+app.post('/api/system/sync-to-offline', async (req: express.Request, res: express.Response) => {
   if (mongoose.connection.readyState !== 1) {
-    res.status(503).json({
+    return res.status(503).json({
       success: false,
       message: 'MongoDB is not connected. Connect to MongoDB first to sync data.'
     });
-    return;
   }
-  
   console.log('[SYNC] Starting sync from MongoDB to SQLite...');
   const result = await syncAllDataToOffline();
   res.json(result);
 });
 
-// Sync SQLite logs to MongoDB (run when back online)
-app.post('/api/system/sync-logs-to-mongo', async (req: express.Request, res: express.Response): Promise<void> => {
+// Sync SQLite logs to MongoDB
+app.post('/api/system/sync-logs-to-mongo', async (req: express.Request, res: express.Response) => {
   if (mongoose.connection.readyState !== 1) {
-    res.status(503).json({
+    return res.status(503).json({
       success: false,
       message: 'MongoDB is not connected. Connect to MongoDB first to sync logs.'
     });
-    return;
   }
-  
   console.log('[SYNC] Starting sync of logs from SQLite to MongoDB...');
   const result = await syncLogsToMongoDB();
   res.json({
@@ -101,28 +145,25 @@ app.post('/api/system/sync-logs-to-mongo', async (req: express.Request, res: exp
   });
 });
 
-// Sync offline changes (users, schedules) to MongoDB
-app.post('/api/system/sync-offline-to-mongo', async (req: express.Request, res: express.Response): Promise<void> => {
+// Sync offline changes to MongoDB
+app.post('/api/system/sync-offline-to-mongo', async (req: express.Request, res: express.Response) => {
   if (mongoose.connection.readyState !== 1) {
-    res.status(503).json({
+    return res.status(503).json({
       success: false,
       message: 'MongoDB is not connected. Connect to MongoDB first to sync data.'
     });
-    return;
   }
-  
   console.log('[SYNC] Starting sync of offline changes to MongoDB...');
   const result = await syncOfflineChangesToMongoDB();
   res.json(result);
 });
 
-// Middleware to check MongoDB connection before routes that require it
+// Middleware to check MongoDB connection
 const checkMongoConnection = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  // Routes that work in offline mode (using SQLite via dataService)
   const offlineAllowedPaths = [
     '/api/system/',
     '/api/face/',
-    '/api/auth/faculty',          // GET, POST, DELETE faculty
+    '/api/auth/faculty',
     '/api/auth/instructors',
     '/api/auth/schedules',
     '/api/auth/add-schedules',
@@ -149,22 +190,19 @@ const checkMongoConnection = (req: express.Request, res: express.Response, next:
     '/faculty/update-credentials',
     '/faculty/logs/'
   ];
-  
-  // Check if path is allowed in offline mode
+
   const isAllowed = offlineAllowedPaths.some(path => req.path.startsWith(path));
-  
+
   if (isOfflineMode() && !isAllowed && mongoose.connection.readyState !== 1) {
-    // In offline mode, warn about MongoDB-only endpoints
-    console.log(`[OFFLINE] Request to ${req.path} - MongoDB not connected, returning offline message`);
+    console.log(`[OFFLINE] Request to ${req.path} - MongoDB not connected`);
   }
-  
+
   next();
 };
 
 app.use(checkMongoConnection);
 
-// Note: MongoDB connection is handled in server.ts based on system mode
-
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', facultyRoutes);
 app.use('/api/superadmin', superadminRoutes);
@@ -174,11 +212,10 @@ app.use('/api/accountcompletion', accountCompletion);
 app.use('/api/face', faceRoutes);
 app.use('/api/auth', activityRoutes);
 
-// Global error handler - catches Mongoose errors in offline mode
+// Global error handler
 app.use((err: any, req: any, res: any, next: any) => {
-  // Check for Mongoose buffering timeout (happens in offline mode)
   if (err.name === 'MongooseError' && err.message.includes('buffering timed out')) {
-    console.log(`[OFFLINE] MongoDB operation timed out for ${req.path} - system is in offline mode`);
+    console.log(`[OFFLINE] MongoDB operation timed out for ${req.path}`);
     return res.status(503).json({
       success: false,
       message: 'System is running in offline mode. This operation requires an online connection.',
@@ -186,8 +223,7 @@ app.use((err: any, req: any, res: any, next: any) => {
       hint: 'Set OFFLINE_MODE=false in .env to enable online mode'
     });
   }
-  
-  // Check for MongoDB not connected error
+
   if (err.message && err.message.includes('Client must be connected')) {
     console.log(`[OFFLINE] MongoDB not connected for ${req.path}`);
     return res.status(503).json({
@@ -196,13 +232,12 @@ app.use((err: any, req: any, res: any, next: any) => {
       mode: 'offline'
     });
   }
-  
+
   console.error("Global error handler:", err);
   res.status(err.status || 500).json({
     success: false,
     message: err.message || "Internal Server Error",
   });
 });
-
 
 export default app;
